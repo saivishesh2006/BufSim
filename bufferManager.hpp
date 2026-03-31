@@ -3,52 +3,23 @@
 
 #include <iostream>
 #include <vector>
-#include <string.h>
-#include <string>
+#include <cstring>
 #include <unordered_map>
-#include <iterator>
 #include <list>
-using namespace std;
 
 #define PAGE_SIZE 4096
 
-// // implementing buffer manager for LRU using Pinned and Unpinned pages 
-// class of Frame which is an entity in Memory to store a Page
-
-class Frame{
-
-    private:
-    int page_Num;       // page number of page
-    char* page_Data;    // data in page
-    FILE *fp;          // file to which this page belongs to
-    bool pinned;       // either pinned or unpinned
-    bool second_chance;         // for clock replacement algorithm
-
-    void setFrame(FILE*fp, int page_Num, char* page_Data, bool pinned);
-    void unpinFrame();
-
-    public:
-    Frame();
-    Frame(const Frame& f);
-    ~Frame();
-    friend class LRUBufferManager;
-    friend class ClockBufferManager;
-    friend class MRUBufferManager;
-    
-};
-
-//Defines a custom hash function for pairs of (FILE*, int) used as keys in maps.
+// Defines a custom hash function for pairs of (FILE*, int)
 struct PairHash {
-    size_t operator()(const pair<FILE *, int>& p) const {
-        size_t temp1 = hash<FILE *>()(p.first);
-        size_t temp2 = hash<int>()(p.second);
+    size_t operator()(const std::pair<FILE *, int>& p) const {
+        size_t temp1 = std::hash<FILE *>()(p.first);
+        size_t temp2 = std::hash<int>()(p.second);
         return temp1 ^ temp2;
     }
 };
 
-//Keeps track of buffer manager statistics such as accesses, disk reads, and page hits.
-class BufStats{
-    public:
+class BufStats {
+public:
     int accesses;
     int diskreads;
     int pageHits;
@@ -57,65 +28,83 @@ class BufStats{
     void clear();
 };
 
+class Frame {
+public:
+    int page_Num;
+    char* page_Data;
+    FILE *fp;
+    int pin_count;         // Changed to pin_count for active query operators
+    bool second_chance;    // For CLOCK
+    bool is_dirty;         // Dirty bit for write-backs
+
+    Frame();
+    ~Frame();
+
+    // Delete copy constructor and assignment operator to prevent double-free segfaults
+    Frame(const Frame&) = delete;
+    Frame& operator=(const Frame&) = delete;
+
+    void setFrame(FILE* fp, int page_Num, bool is_pinned);
+    void unpinFrame();
+    void pinFrame();
+};
+
 class ReplacementPolicy {
 public:
     virtual ~ReplacementPolicy() {}
-    virtual char* getPage(FILE*fp, int page_Num) = 0;
-    virtual void unpinPage(FILE*fp, int page_Num) = 0;
+    virtual char* getPage(FILE* fp, int page_Num) = 0;
+    virtual void unpinPage(FILE* fp, int page_Num) = 0;
     virtual BufStats getStats() = 0;
     virtual void clearStats() = 0;
 };
 
-class LRUBufferManager: public ReplacementPolicy{
-
-    private:
-    int num_Frames;    // number of frames that can be fit in pool
-    list<Frame> lru;  // list to implement LRU
-    unordered_map<pair<FILE*, int>, list<Frame>::iterator, PairHash> mp;   // map to identify whether a page is present in buffer or not
+class LRUBufferManager : public ReplacementPolicy {
+private:
+    int num_Frames;
+    std::list<Frame*> lru; 
+    std::unordered_map<std::pair<FILE*, int>, std::list<Frame*>::iterator, PairHash> mp;
     BufStats stats;
 
-    public:
+public:
     LRUBufferManager(int num_Frames);
-    char* getPage(FILE*fp, int page_Num);
     ~LRUBufferManager();
-    BufStats getStats();
-    void clearStats();
-    void unpinPage(FILE*fp, int page_Num);
+    char* getPage(FILE* fp, int page_Num) override;
+    void unpinPage(FILE* fp, int page_Num) override;
+    BufStats getStats() override;
+    void clearStats() override;
 };
 
-// implement clock replacementr algorithm
-class ClockBufferManager: public ReplacementPolicy{
-
-    private:
-    int num_Frames;    // number of frames that can be fit in pool
-    Frame* bufferPool;  // list to implement clock
-    int clock_hand;   // clock hand
-    BufStats stats;
+class ClockBufferManager : public ReplacementPolicy {
+private:
+    int num_Frames;
+    Frame* bufferPool; 
+    int clock_hand;
     int num_Pages;
-
-    public:
-    ClockBufferManager(int num_Frames);
-    char* getPage(FILE*fp, int page_Num);
-    ~ClockBufferManager();
-    void unpinPage(FILE*fp, int page_Num);
-    BufStats getStats();
-    void clearStats();
-};
-
-class MRUBufferManager: public ReplacementPolicy{
-
-    private:
-    int num_Frames;    // number of frames that can be fit in pool
-    list<Frame> mru;  // list to implement MRU
-    unordered_map<pair<FILE*, int>, list<Frame>::iterator, PairHash> mp;   // map to identify whether a page is present in buffer or not
     BufStats stats;
 
-    public:
-    MRUBufferManager(int num_Frames);
-    char* getPage(FILE*fp, int page_Num);
-    ~MRUBufferManager();
-    BufStats getStats();
-    void clearStats();
-    void unpinPage(FILE*fp, int page_Num);
+public:
+    ClockBufferManager(int num_Frames);
+    ~ClockBufferManager();
+    char* getPage(FILE* fp, int page_Num) override;
+    void unpinPage(FILE* fp, int page_Num) override;
+    BufStats getStats() override;
+    void clearStats() override;
 };
+
+class MRUBufferManager : public ReplacementPolicy {
+private:
+    int num_Frames;
+    std::list<Frame*> mru;
+    std::unordered_map<std::pair<FILE*, int>, std::list<Frame*>::iterator, PairHash> mp;
+    BufStats stats;
+
+public:
+    MRUBufferManager(int num_Frames);
+    ~MRUBufferManager();
+    char* getPage(FILE* fp, int page_Num) override;
+    void unpinPage(FILE* fp, int page_Num) override;
+    BufStats getStats() override;
+    void clearStats() override;
+};
+
 #endif

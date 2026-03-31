@@ -1,298 +1,227 @@
 #include "bufferManager.hpp"
 
-// constructor for Frame
-Frame::Frame(){}
+// --- BufStats Implementation ---
+BufStats::BufStats() : accesses(0), diskreads(0), pageHits(0) {}
 
-// copy constructor for Frame
-Frame::Frame(const Frame &frame){
-    this->page_Num = frame.page_Num;
-    this->page_Data = new char[PAGE_SIZE];
-    memcpy(this->page_Data, frame.page_Data, PAGE_SIZE);
-    this->fp = frame.fp;
-    this->pinned = frame.pinned;
-    this->second_chance = frame.second_chance;
-}
-
-// populates a frame in Memory
-void Frame::setFrame(FILE*fp, int page_Num, char* page_Data, bool pinned){
-    this->page_Num = page_Num;
-    this->page_Data = page_Data;
-    this->fp = fp;
-    this->pinned = pinned;
-    this->second_chance = true;
-}
-
-// unpin a frame
-void Frame::unpinFrame(){
-    this->pinned = false;
-}
-
-// destructor for Frame
-Frame::~Frame(){
-    delete[] page_Data;
-}
-
-
-// constructor for LRUBufferManager
-LRUBufferManager::LRUBufferManager(int num_Frames): num_Frames(num_Frames) {}
-
-// destructor for LRUBufferManager
-LRUBufferManager::~LRUBufferManager(){
-    lru.clear();    // calls destructor of Frame so delete of pageData happens
-    mp.clear();
-}
-
-// get a page from buffer
-char* LRUBufferManager::getPage(FILE*fp, int page_Num){
-
-    // check if page present in memory using map
-    auto it = mp.find({fp, page_Num});
-    if(it!=mp.end()){
-        //check later
-        stats.accesses+=1;
-        stats.pageHits+=1;
-        // page present in memory
-        lru.push_front(*it->second);
-        lru.erase(it->second);
-        mp[{fp, page_Num}] = lru.begin();
-        lru.begin()->pinned = true;
-        return lru.begin()->page_Data;
-    }
-    // if page is not in memory
-    // check if space is there in buffer
-
-    if((int)lru.size() == num_Frames){
-
-        // find last unpinned page and remove it
-        auto it = lru.end();
-        it--;
-        while(it->pinned){
-            if(it==lru.begin())return NULL;
-            it--;
-        }
-        // remove page from buffer
-        mp.erase({it->fp, it->page_Num});
-        lru.erase(it);
-    }
-
-    // add the page to buffer
-    char* page_Data = new char[PAGE_SIZE];
-    fseek(fp, page_Num*PAGE_SIZE, SEEK_SET);
-    fread(page_Data, PAGE_SIZE, 1, fp);
-
-    Frame frame = Frame();
-    frame.setFrame(fp, page_Num, page_Data, true);
-    lru.push_front(frame);
-
-    mp[{fp, page_Num}] = lru.begin();
-    stats.accesses++;
-    stats.diskreads++;
-    char name[20];
-    memcpy(name, page_Data, 20);
-    return lru.begin()->page_Data;
-}
-
-// clear stats
-void LRUBufferManager::clearStats(){
-    stats.clear();
-}
-
-// get stats
-BufStats LRUBufferManager::getStats(){
-    return stats;
-}
-
-// constructor for BufStats
-BufStats::BufStats(): accesses(0), diskreads(0), pageHits(0) {}
-
-// clear stats
-void BufStats::clear(){
+void BufStats::clear() {
     accesses = 0;
     diskreads = 0;
     pageHits = 0;
 }
 
+// --- Frame Implementation ---
+Frame::Frame() : page_Num(-1), fp(nullptr), pin_count(0), second_chance(false), is_dirty(false) {
+    page_Data = new char[PAGE_SIZE]; // Crucial: Allocate memory once per frame
+}
 
-// unpin a page
-void LRUBufferManager::unpinPage(FILE*fp, int page_Num){
-    // check if page present in memory using map
-    auto it = mp.find({fp, page_Num});
-    if(it != mp.end()){
-        // page present in memory
-        // unpin page
-        it->second->unpinFrame();
+Frame::~Frame() {
+    delete[] page_Data;
+}
+
+void Frame::setFrame(FILE* file_ptr, int p_Num, bool is_pinned) {
+    this->fp = file_ptr;
+    this->page_Num = p_Num;
+    this->pin_count = is_pinned ? 1 : 0;
+    this->second_chance = true;
+    this->is_dirty = false;
+    
+    if (fp != nullptr) {
+        fseek(fp, page_Num * PAGE_SIZE, SEEK_SET);
+        fread(page_Data, PAGE_SIZE, 1, fp);
     }
 }
 
-// constructor for ClockBufferManager
-ClockBufferManager::ClockBufferManager(int num_Frames): num_Frames(num_Frames), clock_hand(0), num_Pages(0){
-    bufferPool = new Frame[num_Frames];
+void Frame::pinFrame() {
+    pin_count++;
 }
 
-// destructor for ClockBufferManager
-ClockBufferManager::~ClockBufferManager(){
+void Frame::unpinFrame() {
+    if (pin_count > 0) pin_count--;
+}
+
+
+// --- LRUBufferManager Implementation ---
+LRUBufferManager::LRUBufferManager(int num_Frames) : num_Frames(num_Frames) {}
+
+LRUBufferManager::~LRUBufferManager() {
+    for (Frame* f : lru) {
+        delete f;
+    }
+    lru.clear();
+    mp.clear();
+}
+
+char* LRUBufferManager::getPage(FILE* fp, int page_Num) {
+    stats.accesses++;
+
+    auto it = mp.find({fp, page_Num});
+    if (it != mp.end()) {
+        stats.pageHits++;
+        // O(1) update: Move existing frame to front without copying memory
+        lru.splice(lru.begin(), lru, it->second);
+        (*lru.begin())->pinFrame();
+        return (*lru.begin())->page_Data;
+    }
+
+    stats.diskreads++;
+    Frame* newFrame = nullptr;
+
+    if ((int)lru.size() == num_Frames) {
+        // Find the least recently used UNPINNED page (search from back)
+        auto rev_it = lru.end();
+        rev_it--;
+        while (rev_it != lru.begin() && (*rev_it)->pin_count > 0) {
+            rev_it--;
+        }
+
+        if ((*rev_it)->pin_count > 0) {
+            return nullptr; // All pages are pinned, buffer is stalled
+        }
+
+        newFrame = *rev_it;
+        mp.erase({newFrame->fp, newFrame->page_Num});
+        lru.erase(rev_it);
+    } else {
+        newFrame = new Frame();
+    }
+
+    newFrame->setFrame(fp, page_Num, true);
+    lru.push_front(newFrame);
+    mp[{fp, page_Num}] = lru.begin();
+
+    return newFrame->page_Data;
+}
+
+void LRUBufferManager::unpinPage(FILE* fp, int page_Num) {
+    auto it = mp.find({fp, page_Num});
+    if (it != mp.end()) {
+        (*it->second)->unpinFrame();
+    }
+}
+
+BufStats LRUBufferManager::getStats() { return stats; }
+void LRUBufferManager::clearStats() { stats.clear(); }
+
+
+// --- ClockBufferManager Implementation ---
+ClockBufferManager::ClockBufferManager(int num_Frames) : num_Frames(num_Frames), clock_hand(0), num_Pages(0) {
+    bufferPool = new Frame[num_Frames]; // Calls default constructor, allocating page_Data safely
+}
+
+ClockBufferManager::~ClockBufferManager() {
     delete[] bufferPool;
 }
 
-// get a page from buffer
-char *ClockBufferManager::getPage(FILE* fp, int page_Num){
+char* ClockBufferManager::getPage(FILE* fp, int page_Num) {
+    stats.accesses++;
 
-
-    // check if the page is present in memory
-    for(int i=0;i<num_Pages;++i){
-        if(bufferPool[i].fp == fp && bufferPool[i].page_Num == page_Num){
-            // page is present in memory
-            // update stats
-            stats.accesses++;
-            // update second chance
-            bufferPool[i].second_chance = true;
-            bufferPool[i].pinned = true;
+    for (int i = 0; i < num_Pages; ++i) {
+        if (bufferPool[i].fp == fp && bufferPool[i].page_Num == page_Num) {
             stats.pageHits++;
+            bufferPool[i].second_chance = true;
+            bufferPool[i].pinFrame();
             return bufferPool[i].page_Data;
         }
     }
 
-    // page is not present in memory
-    if(num_Pages < num_Frames){
-        fseek(fp, page_Num*PAGE_SIZE, SEEK_SET);
-        char* page_Data = new char[PAGE_SIZE];
-        fread(page_Data, PAGE_SIZE, 1, fp);
-        bufferPool[num_Pages].setFrame(fp, page_Num, page_Data, true);
+    stats.diskreads++;
+
+    if (num_Pages < num_Frames) {
+        bufferPool[num_Pages].setFrame(fp, page_Num, true);
+        char* data = bufferPool[num_Pages].page_Data;
         num_Pages++;
-        stats.accesses++;
-        stats.diskreads++;
-        return page_Data;
+        return data;
     }
-    stats.accesses++;
-    // page is not present in memory and memory is full
-    while(true){
-        if(bufferPool[clock_hand].second_chance){
-            // page has second chance
+
+    while (true) {
+        if (bufferPool[clock_hand].pin_count > 0) {
+            clock_hand = (clock_hand + 1) % num_Frames;
+            continue;
+        }
+        if (bufferPool[clock_hand].second_chance) {
             bufferPool[clock_hand].second_chance = false;
-            clock_hand = (clock_hand+1)%num_Frames;
+            clock_hand = (clock_hand + 1) % num_Frames;
             continue;
         }
-        if(bufferPool[clock_hand].pinned){
-            // page is pinned
-            clock_hand = (clock_hand+1)%num_Frames;
-            continue;
-        }
-        // page is not pinned and does not have second chance
-        // seek the page in file
-        fseek(fp, page_Num*PAGE_SIZE, SEEK_SET);
-        fread(bufferPool[clock_hand].page_Data, PAGE_SIZE, 1, fp);
-        bufferPool[clock_hand].fp = fp;
-        bufferPool[clock_hand].page_Num = page_Num;
-        bufferPool[clock_hand].pinned = true;
-        bufferPool[clock_hand].second_chance = true;
+
+        // Evict and replace
+        bufferPool[clock_hand].setFrame(fp, page_Num, true);
         int st = clock_hand;
-        clock_hand = (clock_hand+1)%num_Frames;
-        stats.diskreads++;
+        clock_hand = (clock_hand + 1) % num_Frames;
         return bufferPool[st].page_Data;
     }
 }
 
-// unpin a page
-void ClockBufferManager::unpinPage(FILE* fp, int page_Num){
-    
-    // check if page is present in memory
-    for(int i=0;i<num_Pages;++i){
-        if(bufferPool[i].fp == fp && bufferPool[i].page_Num == page_Num){
-            // page is present in memory
-            // unpin page
+void ClockBufferManager::unpinPage(FILE* fp, int page_Num) {
+    for (int i = 0; i < num_Pages; ++i) {
+        if (bufferPool[i].fp == fp && bufferPool[i].page_Num == page_Num) {
             bufferPool[i].unpinFrame();
             return;
         }
     }
 }
 
-// clear stats
-void ClockBufferManager::clearStats(){
-    stats.clear();
-}
+BufStats ClockBufferManager::getStats() { return stats; }
+void ClockBufferManager::clearStats() { stats.clear(); }
 
-// get stats
-BufStats ClockBufferManager::getStats(){
-    return stats;
-}
 
-// constructor for MRUBufferManager
-MRUBufferManager::MRUBufferManager(int num_Frames): num_Frames(num_Frames) {}
+// --- MRUBufferManager Implementation ---
+MRUBufferManager::MRUBufferManager(int num_Frames) : num_Frames(num_Frames) {}
 
-// destructor for MRUBufferManager
-MRUBufferManager::~MRUBufferManager(){
-    mru.clear();      // the destructor of frame will be automatically called
+MRUBufferManager::~MRUBufferManager() {
+    for (Frame* f : mru) {
+        delete f;
+    }
+    mru.clear();
     mp.clear();
 }
 
-// get a page from buffer
-char *MRUBufferManager::getPage(FILE* fp, int page_Num){
+char* MRUBufferManager::getPage(FILE* fp, int page_Num) {
+    stats.accesses++;
 
-    // check if page is present in memory
     auto it = mp.find({fp, page_Num});
-    if(it!=mp.end()){
-        stats.accesses++;
-        // present so bring it to first and pin
-        mru.push_front(*it->second);
-        mru.erase(it->second);
-        mp[{fp, page_Num}] = mru.begin();
-        mru.begin()->pinned = true;
+    if (it != mp.end()) {
         stats.pageHits++;
-        return mru.begin()->page_Data;
+        // O(1) update to move to front
+        mru.splice(mru.begin(), mru, it->second);
+        (*mru.begin())->pinFrame();
+        return (*mru.begin())->page_Data;
     }
 
-    // not in memory, so check size
-    if((int)mru.size() == num_Frames){
+    stats.diskreads++;
+    Frame* newFrame = nullptr;
 
-        int rmv = 0;
-        for(auto it=mru.begin();it!=mru.end();++it){
-            if(it->pinned){
-                // page is pinned
-                continue;
-            }
-            // page is not pinned
-            // remove it from memory
-            mp.erase({it->fp, it->page_Num});
-            mru.erase(it);
-            rmv = 1;
-            break;
+    if ((int)mru.size() == num_Frames) {
+        // MRU evicts the MOST recently used unpinned page (search from front)
+        auto it_mru = mru.begin();
+        while (it_mru != mru.end() && (*it_mru)->pin_count > 0) {
+            it_mru++;
         }
 
-        if(!rmv)return NULL;
+        if (it_mru == mru.end()) {
+            return nullptr; // Buffer stalled
+        }
+
+        newFrame = *it_mru;
+        mp.erase({newFrame->fp, newFrame->page_Num});
+        mru.erase(it_mru);
+    } else {
+        newFrame = new Frame();
     }
 
-    // add the frame at start
-    fseek(fp, page_Num*PAGE_SIZE, SEEK_SET);
-    char* page_Data = new char[PAGE_SIZE];
-    fread(page_Data, PAGE_SIZE, 1, fp);
-    Frame frame = Frame();
-        
-    frame.setFrame(fp, page_Num, page_Data, true);
-    mru.push_front(frame);
+    newFrame->setFrame(fp, page_Num, true);
+    mru.push_front(newFrame);
     mp[{fp, page_Num}] = mru.begin();
-    stats.accesses++;
-    stats.diskreads++;
-    return mru.begin()->page_Data;
+
+    return newFrame->page_Data;
 }
 
-
-// unpin the frame
-
-void MRUBufferManager::unpinPage(FILE *fp, int page_Num){
-
-    // check if page is present in memory
+void MRUBufferManager::unpinPage(FILE* fp, int page_Num) {
     auto it = mp.find({fp, page_Num});
-    if(it!=mp.end()){
-        // page is present in memory
-        // unpin page
-        it->second->unpinFrame();
+    if (it != mp.end()) {
+        (*it->second)->unpinFrame();
     }
 }
 
-void MRUBufferManager::clearStats(){
-    stats.clear();
-}
-
-BufStats MRUBufferManager::getStats(){
-    return stats;
-}
+BufStats MRUBufferManager::getStats() { return stats; }
+void MRUBufferManager::clearStats() { stats.clear(); }
