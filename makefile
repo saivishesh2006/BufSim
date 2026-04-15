@@ -1,28 +1,15 @@
-# Compiler and Flags
-CXX = g++
-CXXFLAGS = -Wall -Wextra -O3 -std=c++17
+CXX      = g++
+CXXFLAGS = -Wall -Wextra -O2 -std=c++17
 
-# Executable Names
-SIM_TARGET = bufsim
-GEN_TARGET = uploader
+SIM_TARGET  = bufsim
+SIM_SOURCES = main.cpp bufferManager.cpp catalog.cpp sqlParser.cpp queryExecutor.cpp
 
-# Source Files
-SIM_SOURCES = main.cpp bufferManager.cpp queryProcessor.cpp
-GEN_SOURCES = databaseUploader.cpp
+all: $(SIM_TARGET)
 
-# Default target: builds everything
-all: $(GEN_TARGET) $(SIM_TARGET)
-
-# Build the main simulator
-$(SIM_TARGET): $(SIM_SOURCES) bufferManager.hpp queryProcessor.hpp
+$(SIM_TARGET): $(SIM_SOURCES) bufferManager.hpp catalog.hpp sqlParser.hpp queryExecutor.hpp
 	$(CXX) $(CXXFLAGS) $(SIM_SOURCES) -o $(SIM_TARGET)
 
-# Build the data uploader/generator
-$(GEN_TARGET): $(GEN_SOURCES)
-	$(CXX) $(CXXFLAGS) $(GEN_SOURCES) -o $(GEN_TARGET)
-
-# Clean target: removes executables and generated data files
 clean:
-	rm -f $(SIM_TARGET) $(GEN_TARGET) fileBinary.bin results.csv
+	rm -f bufsim data/*.bin output.txt *.o catalog.json
 
 .PHONY: all clean
