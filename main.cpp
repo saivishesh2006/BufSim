@@ -1,152 +1,151 @@
 #include <iostream>
 #include <fstream>
-#include <iomanip>
-#include "queryProcessor.hpp"
+#include <string>
+#include <algorithm>
+#include "catalog.hpp"
+#include "sqlParser.hpp"
+#include "queryExecutor.hpp"
 
 using namespace std;
 
-// ==========================================
-// MODE 1: Interactive Manual Testing
-// ==========================================
-void runInteractiveMode(FILE *fp1, FILE *fp2) {
-    cout << "\n========== INTERACTIVE MODE ==========\n";
-    cout << "Select a Replacement Algorithm:\n";
-    cout << "1: LRU\n2: MRU\n3: CLOCK\nChoice: ";
-    int choice;
-    cin >> choice;
-
-    if (choice < 1 || choice > 3) {
-        cerr << "Invalid choice. Returning to menu.\n";
-        return;
-    }
-
-    cout << "Enter number of frames for the Buffer Pool: ";
-    int num_Frames;
-    cin >> num_Frames;
-
-    QueryProcessor qp(num_Frames, choice);
-
-    cout << "\nSelect Query Type:\n";
-    cout << "1: Select Query\n2: Join Query\nChoice: ";
-    int queryType;
-    cin >> queryType;
-
-    if (queryType == 1) {
-        cout << "Enter column to filter by (1=Name, 2=Age, 3=Weight): ";
-        int col;
-        cin >> col;
-        cout << "Enter value to match: ";
-        string value;
-        cin >> value;
-        
-        // Assuming processSelectQuery still prints its own stats
-        qp.processSelectQuery(fp1, col, value); 
-    } 
-    else if (queryType == 2) {
-        cout << "Enter column to join on for Database 1 (1=Name, 2=Age, 3=Weight): ";
-        int col1;
-        cin >> col1;
-        cout << "Enter column to join on for Database 2 (1=Name, 2=Age, 3=Weight): ";
-        int col2;
-        cin >> col2;
-        
-        BufStats stats = qp.processJoinQuery(fp1, fp2, col1, col2);
-        
-        // Print the stats here since we removed them from the class!
-        cout << "\n--- Join Query Stats ---\n";
-        cout << "Page Accesses: " << stats.accesses << "\n";
-        cout << "Disk Reads: " << stats.diskreads << "\n";
-        cout << "Page Hits: " << stats.pageHits << "\n";
-    } 
-    else {
-        cerr << "Invalid query type.\n";
-    }
+void printBanner() {
+    cout << "\n";
+    cout << "=======================================================\n";
+    cout << "          BufSim - SQL Query Engine                    \n";
+    cout << "=======================================================\n";
+    cout << "Supported SQL:\n";
+    cout << "  CREATE TABLE t (col INT, col CHAR(N), ...)\n";
+    cout << "  DROP TABLE t\n";
+    cout << "  ALTER TABLE t ADD [COLUMN] col TYPE\n";
+    cout << "  INSERT INTO t [(col,...)] VALUES (v1,...)\n";
+    cout << "  SELECT [DISTINCT] * | col [AS a], COUNT(*), SUM/AVG/MIN/MAX(col)\n";
+    cout << "    FROM t\n";
+    cout << "    [WHERE col op val [AND|OR ...]]\n";
+    cout << "    [GROUP BY col] [HAVING col op val]\n";
+    cout << "    [ORDER BY col [ASC|DESC]]\n";
+    cout << "    [LIMIT n [OFFSET m]]\n";
+    cout << "  SELECT ... FROM t1 JOIN t2 ON t1.c = t2.c [WHERE ...]\n";
+    cout << "  UPDATE t SET col=val [, ...] [WHERE ...]\n";
+    cout << "  DELETE FROM t [WHERE ...]\n";
+    cout << "  EXPLAIN SELECT * FROM t\n";
+    cout << "  EXPLAIN SELECT * FROM t1 JOIN t2 ON t1.c = t2.c\n";
+    cout << "  SET POLICY LRU | MRU | CLOCK\n";
+    cout << "  SHOW TABLES\n";
+    cout << "  exit\n";
+    cout << "  Operators: = != <> > < >= <= LIKE IS NULL IS NOT NULL\n";
+    cout << "=======================================================\n";
+    cout << "Results written to: output.txt\n\n";
 }
 
-// ==========================================
-// MODE 2: Automated CSV Benchmarking
-// ==========================================
-void runAutomatedBenchmark(FILE *fp1, FILE *fp2) {
-    cout << "\n========== AUTOMATED BENCHMARK ==========\n";
-    ofstream csvFile("results.csv");
-    csvFile << "Buffer_Size,LRU_Reads,MRU_Reads,CLOCK_Reads\n";
-
-    cout << left << setw(12) << "Frames" 
-         << setw(15) << "LRU Reads" 
-         << setw(15) << "MRU Reads" 
-         << setw(15) << "CLOCK Reads\n";
-    cout << "--------------------------------------------------------\n";
-
-    for (int frames = 3; frames <= 50; frames++) {
-        // Reset file pointers to the beginning for fair tests
-        fseek(fp1, 0, SEEK_SET);
-        fseek(fp2, 0, SEEK_SET);
-
-        QueryProcessor qp_lru(frames, LRU);
-        BufStats lru_stats = qp_lru.processJoinQuery(fp1, fp2, 1, 1);
-
-        fseek(fp1, 0, SEEK_SET);
-        fseek(fp2, 0, SEEK_SET);
-        QueryProcessor qp_mru(frames, MRU);
-        BufStats mru_stats = qp_mru.processJoinQuery(fp1, fp2, 1, 1);
-
-        fseek(fp1, 0, SEEK_SET);
-        fseek(fp2, 0, SEEK_SET);
-        QueryProcessor qp_clock(frames, CLOCK);
-        BufStats clock_stats = qp_clock.processJoinQuery(fp1, fp2, 1, 1);
-
-        csvFile << frames << "," 
-                << lru_stats.diskreads << "," 
-                << mru_stats.diskreads << "," 
-                << clock_stats.diskreads << "\n";
-
-        cout << left << setw(12) << frames 
-             << setw(15) << lru_stats.diskreads 
-             << setw(15) << mru_stats.diskreads 
-             << setw(15) << clock_stats.diskreads << "\n";
+int choosePolicyInteractive() {
+    cout << "Select Buffer Replacement Policy:\n";
+    cout << "  1: LRU   (Least Recently Used)\n";
+    cout << "  2: MRU   (Most Recently Used)\n";
+    cout << "  3: CLOCK (Second Chance)\n";
+    cout << "Choice: ";
+    int c = 1;
+    if (!(cin >> c) || c < 1 || c > 3) {
+        cout << "Invalid, defaulting to LRU\n";
+        c = LRU;
+        cin.clear();
     }
-
-    csvFile.close();
-    cout << "\nBenchmark complete! Data safely written to results.csv\n";
+    return c;
 }
 
-// ==========================================
-// MAIN ENTRY POINT
-// ==========================================
-int main() {
-    FILE *fp1 = fopen("fileBinary.bin", "rb");
-    FILE *fp2 = fopen("fileBinary.bin", "rb");
-
-    if (!fp1 || !fp2) {
-        cerr << "Error: Could not open fileBinary.bin. Run the generator first.\n";
-        return 1;
+int chooseFramesInteractive() {
+    cout << "Enter number of buffer frames (e.g. 10): ";
+    int f = 10;
+    if (!(cin >> f) || f < 3) {
+        cout << "Minimum 3 frames, using 3\n";
+        f = 3;
+        cin.clear();
     }
+    return f;
+}
 
+string policyName(int p) {
+    if (p == LRU)   return "LRU";
+    if (p == MRU)   return "MRU";
+    if (p == CLOCK) return "CLOCK";
+    return "?";
+}
+
+int main(int /*argc*/, char* /*argv*/[]) {
+    printBanner();
+
+    int policy     = choosePolicyInteractive();
+    int num_frames = chooseFramesInteractive();
+
+    cout << "\nUsing " << policyName(policy)
+         << " with " << num_frames << " frames.\n\n";
+
+    ofstream out("output.txt", ios::app);
+    if (!out) { cerr << "Cannot open output.txt\n"; return 1; }
+    out << "\n========================================\n";
+    out << "Session: policy=" << policyName(policy)
+        << " frames=" << num_frames << "\n";
+    out << "========================================\n";
+
+    Catalog       catalog("catalog.json");
+    QueryExecutor executor(num_frames, policy, catalog, out);
+
+    cin.ignore();
+    string line;
     while (true) {
-        cout << "\n=========================================\n";
-        cout << "        BUFSIM: Main Menu                \n";
-        cout << "=========================================\n";
-        cout << "1. Run Interactive Mode (Test single queries)\n";
-        cout << "2. Run Automated Benchmark (Generate CSV)\n";
-        cout << "3. Exit\n";
-        cout << "Choice: ";
-        
-        int mode;
-        cin >> mode;
+        cout << "SQL> ";
+        if (!getline(cin, line)) break;
 
-        if (mode == 1) {
-            runInteractiveMode(fp1, fp2);
-        } else if (mode == 2) {
-            runAutomatedBenchmark(fp1, fp2);
-        } else if (mode == 3) {
-            cout << "Exiting BufSim. Goodbye!\n";
+        size_t s = line.find_first_not_of(" \t");
+        if (s == string::npos) continue;
+        line = line.substr(s);
+
+        size_t e = line.find_last_not_of(" \t\r\n");
+        if (e != string::npos) line = line.substr(0, e + 1);
+        if (line.empty()) continue;
+
+        string uline = line;
+        transform(uline.begin(), uline.end(), uline.begin(), ::toupper);
+
+        if (uline == "EXIT" || uline == "QUIT") {
+            cout << "Goodbye!\n";
+            executor.printSessionSummary();
             break;
-        } else {
-            cout << "Invalid choice. Try again.\n";
         }
+
+        if (uline == "SHOW TABLES") {
+            auto tables = catalog.allTables();
+            sort(tables.begin(), tables.end());
+            cout << "Tables:\n";
+            out  << "\n--- SHOW TABLES ---\n";
+            if (tables.empty()) {
+                cout << "  (none)\n"; out << "  (none)\n";
+            }
+            for (auto& t : tables) {
+                const TableDef& td = catalog.getTable(t);
+                string schema = t + " (";
+                for (size_t i = 0; i < td.columns.size(); ++i) {
+                    if (i) schema += ", ";
+                    schema += td.columns[i].name + " " + td.columns[i].type;
+                    if (td.columns[i].type == "CHAR")
+                        schema += "(" + to_string(td.columns[i].size) + ")";
+                }
+                schema += ")";
+                cout << "  " << schema << "\n";
+                out  << "  " << schema << "\n";
+            }
+            continue;
+        }
+
+        if (!line.empty() && line.back() == ';') line.pop_back();
+
+        out << "\nSQL: " << line << "\n";
+        cout.flush();
+
+        ParsedQuery pq = SQLParser::parse(line);
+        executor.execute(pq);
     }
 
-    fclose(fp1);
-    fclose(fp2);
+    out.close();
+    cout << "\nAll results written to output.txt\n";
     return 0;
 }

@@ -1,0 +1,1568 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BufSim — SQL Query Engine</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:           #d8e2f0;
+  --surface:      #eaf0fb;
+  --surface2:     #dce6f5;
+  --border:       #b8c8e0;
+  --border2:      #93accc;
+  --text:         #0f1e35;
+  --text2:        #3d5470;
+  --text3:        #7a95b0;
+  --mono:         'Cascadia Code', 'JetBrains Mono', 'Consolas', 'Courier New', monospace;
+  --sans:         -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+
+  --hit-bg:       #d6f0e0; --hit-border: #2e9e58; --hit-text: #0d4425;
+  --miss-bg:      #fad8d8; --miss-border: #c0392b; --miss-text: #5a1a1a;
+  --active-bg:    #d4e8ff; --active-border: #2563b0; --active-text: #0c2d60;
+  --sc-bg:        #fdecd0; --sc-border:     #c47a14; --sc-text:   #4a2900;
+  --empty-bg:     #dce6f5; --empty-border:  #93accc; --empty-text: #7a95b0;
+
+  --accent:       #1d4ed8;
+  --accent2:      #1338a8;
+
+  /* Section backgrounds — distinct, light, aesthetic */
+  --tint-topbar:  #1d3461;          /* rich navy — single dark element for authority */
+  --tint-repl:    #eaf0fb;          /* periwinkle blue */
+  --tint-right:   #e4f5ee;          /* soft sage mint */
+  --tint-bar:     #d8e8f8;          /* deeper blue for SQL bar */
+  --tint-pane-hdr:#c8daee;          /* header strips */
+  --tint-section: #ddf0e8;          /* right panel sections */
+}
+
+html, body {
+  height: 100%; overflow: hidden;
+  font-family: var(--sans);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.topbar {
+  height: 62px;
+  background: var(--tint-topbar);
+  border-bottom: none;
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+  gap: 18px;
+  flex-shrink: 0;
+  user-select: none;
+  box-shadow: 0 2px 8px rgba(15,30,60,0.18);
+}
+
+.brand {
+  font-family: var(--mono);
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.6px;
+  color: #ffffff;
+}
+.brand span { color: #7eb8f7; }
+
+.sep { width: 1px; height: 24px; background: rgba(255,255,255,0.2); }
+
+/* Topbar tagline */
+.brand-tag {
+  font-size: 13px;
+  color: rgba(255,255,255,0.5);
+  font-family: var(--sans);
+  font-weight: 400;
+  letter-spacing: 0;
+  border-left: 1px solid rgba(255,255,255,0.2);
+  padding-left: 12px;
+  margin-left: -4px;
+}
+
+.policy-group { display: flex; gap: 5px; }
+.pbtn {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  padding: 6px 16px;
+  border: 1px solid rgba(255,255,255,0.25);
+  border-radius: 5px;
+  background: rgba(255,255,255,0.10);
+  color: rgba(255,255,255,0.75);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.pbtn:hover { background: rgba(255,255,255,0.20); color: #fff; }
+.pbtn.on {
+  background: #7eb8f7;
+  color: #0a1e3d;
+  border-color: #7eb8f7;
+}
+
+.frames-row {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 14px; color: rgba(255,255,255,0.7);
+}
+.frames-input {
+  font-family: var(--mono); font-size: 14px;
+  width: 54px; padding: 5px 8px;
+  border: 1px solid rgba(255,255,255,0.25); border-radius: 5px;
+  text-align: center; color: #fff; background: rgba(255,255,255,0.12);
+  outline: none;
+}
+.frames-input:focus { border-color: #7eb8f7; }
+
+.reset-btn {
+  margin-left: auto;
+  font-size: 13px; padding: 6px 15px;
+  border: 1px solid rgba(255,255,255,0.25); border-radius: 5px;
+  background: rgba(255,255,255,0.10); color: rgba(255,255,255,0.75); cursor: pointer;
+  font-weight: 500;
+  transition: background 0.12s;
+}
+.reset-btn:hover { background: rgba(255,255,255,0.20); color: #fff; }
+
+/* ── MAIN AREA ───────────────────────────────── */
+.main {
+  display: flex;
+  height: calc(100vh - 62px);
+  overflow: hidden;
+}
+
+/* ── LEFT: REPL ──────────────────────────────── */
+.left {
+  flex: 0 0 60%;
+  display: flex; flex-direction: column;
+  border-right: 1px solid var(--border);
+  overflow: hidden;
+  background: var(--tint-repl);
+}
+
+.pane-header {
+  padding: 9px 16px;
+  font-size: 11px; font-weight: 700;
+  letter-spacing: 0.8px; text-transform: uppercase;
+  color: var(--text2);
+  border-bottom: 1px solid var(--border);
+  background: var(--tint-pane-hdr);
+  flex-shrink: 0;
+}
+
+.repl-scroll {
+  flex: 1; overflow-y: auto;
+  padding: 14px 18px 6px;
+  background: var(--tint-repl);
+}
+
+/* History entries */
+.entry { margin-bottom: 16px; }
+
+.cmd-line {
+  display: flex; align-items: baseline; gap: 8px;
+  font-family: var(--mono); font-size: 14px;
+}
+.prompt { color: var(--accent); font-weight: 700; }
+.cmd-text { color: var(--text); }
+
+.result-block {
+  margin-top: 6px;
+  padding: 9px 13px;
+  border-left: 3px solid var(--border2);
+  border-radius: 0 5px 5px 0;
+  background: var(--surface2);
+  font-family: var(--mono);
+  font-size: 13px;
+  white-space: pre;
+  overflow-x: auto;
+  color: var(--text);
+  line-height: 1.6;
+}
+.result-block.ok  { border-left-color: var(--hit-border); background: var(--hit-bg); }
+.result-block.err { border-left-color: var(--miss-border); background: var(--miss-bg); color: var(--miss-text); }
+.result-block.inf { border-left-color: var(--active-border); background: var(--active-bg); }
+
+/* ── Inline per-query stats (original row style, bigger) ── */
+.stats-block {
+  margin-top: 6px;
+  padding: 9px 13px;
+  border: 1px solid var(--hit-border);
+  border-radius: 5px;
+  background: var(--hit-bg);
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.8;
+  color: var(--text2);
+}
+.stats-title { font-weight: 700; color: var(--hit-text); margin-bottom: 3px; font-size: 13px; }
+.srow { display: flex; justify-content: space-between; max-width: 320px; }
+.srow .sk { color: var(--text2); }
+.srow .sv { font-weight: 700; color: var(--text); min-width: 60px; text-align: right; font-size: 14px; }
+.srow .sv.g { color: var(--hit-text); }
+.srow .sv.b { color: var(--miss-text); }
+
+/* Welcome */
+.welcome {
+  font-size: 14px; line-height: 1.8;
+  color: var(--text2); margin-bottom: 8px;
+}
+.welcome h2 {
+  font-size: 16px; font-weight: 700;
+  color: var(--text); margin-bottom: 6px;
+  font-family: var(--mono);
+}
+.welcome p { margin-bottom: 3px; }
+.welcome code {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--accent);
+}
+
+/* SQL input bar — fixed ~20% height */
+.sql-bar {
+  flex-shrink: 0;
+  border-top: 2px solid var(--border2);
+  background: var(--tint-bar);
+  display: flex; align-items: flex-start;
+  padding: 10px 13px; gap: 10px;
+  height: 20vh;
+  min-height: 120px;
+}
+.sql-input {
+  flex: 1;
+  font-family: var(--mono); font-size: 15px;
+  border: none; outline: none; background: transparent;
+  color: var(--text);
+  resize: none;
+  height: 100%;
+  overflow-y: auto;
+  line-height: 1.6;
+  padding-top: 2px;
+}
+.sql-input::placeholder { color: var(--text3); }
+.sql-ps {
+  font-family: var(--mono); font-size: 15px;
+  font-weight: 700; color: var(--accent);
+  user-select: none; padding-top: 3px; flex-shrink: 0;
+}
+.run-btn {
+  font-size: 13px; padding: 7px 18px;
+  border: 1px solid var(--accent); border-radius: 6px;
+  background: var(--accent); color: #fff; cursor: pointer;
+  transition: background 0.12s; white-space: nowrap;
+  flex-shrink: 0; margin-top: 1px;
+}
+.run-btn:hover { background: var(--accent2); border-color: var(--accent2); }
+
+/* ── RIGHT: BUFFER + STATS ───────────────────── */
+.right {
+  flex: 0 0 40%;
+  display: flex; flex-direction: column;
+  background: var(--tint-right);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.right > * {
+  flex-shrink: 0;
+}
+
+.section {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--tint-section);
+}
+
+.section-label {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.7px;
+  text-transform: uppercase; color: var(--text3);
+  margin-bottom: 10px;
+  display: flex; align-items: center; gap: 8px;
+}
+.policy-badge {
+  font-family: var(--mono); font-size: 11px; font-weight: 700;
+  padding: 2px 8px; border-radius: 3px;
+  background: var(--active-bg); color: var(--active-text);
+  border: 1px solid var(--active-border);
+}
+
+/* Frame grid */
+.frame-grid {
+  display: flex; flex-wrap: wrap; gap: 5px;
+  margin-bottom: 10px;
+}
+.frame {
+  width: 56px; height: 50px;
+  border: 1px solid var(--empty-border);
+  border-radius: 6px;
+  background: var(--empty-bg);
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  font-family: var(--mono);
+  color: var(--empty-text);
+  cursor: default;
+  transition: background 0.18s, border-color 0.18s, color 0.18s;
+  position: relative;
+}
+.frame .fid  { font-size: 9px; opacity: 0.7; }
+.frame .fpg  { font-size: 12px; font-weight: 700; }
+.frame .ftbl { font-size: 9px; opacity: 0.75; max-width: 52px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align:center; }
+
+.frame.hit    { background: var(--hit-bg);    border-color: var(--hit-border);    color: var(--hit-text); }
+.frame.miss   { background: var(--miss-bg);   border-color: var(--miss-border);   color: var(--miss-text); }
+.frame.active { background: var(--active-bg); border-color: var(--active-border); color: var(--active-text); }
+.frame.sc     { background: var(--sc-bg);     border-color: var(--sc-border);     color: var(--sc-text); }
+
+/* Clock hand arrow */
+.frame.clock-ptr::after {
+  content: '▲';
+  position: absolute; bottom: -15px;
+  font-size: 9px; color: var(--sc-border);
+}
+
+/* Legend */
+.legend {
+  display: flex; flex-wrap: wrap; gap: 10px;
+}
+.leg {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 12px; color: var(--text2);
+}
+.leg-dot {
+  width: 10px; height: 10px; border-radius: 2px;
+  flex-shrink: 0;
+}
+
+/* Clock hand indicator */
+.clock-indicator {
+  margin-top: 7px;
+  font-family: var(--mono); font-size: 12px;
+  color: var(--text2); display: flex; align-items: center; gap: 6px;
+}
+.clock-indicator .hand {
+  font-weight: 700; color: var(--sc-text);
+}
+
+/* Stats cards (right panel) */
+.stats-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 7px;
+  margin-bottom: 10px;
+}
+.stat-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.sc-lbl {
+  font-size: 11px; color: var(--text3);
+  text-transform: uppercase; letter-spacing: 0.4px;
+}
+.sc-num {
+  font-family: var(--mono); font-size: 28px; font-weight: 800;
+  color: var(--text); margin-top: 2px; line-height: 1;
+}
+.sc-num.g { color: var(--hit-text); }
+.sc-num.b { color: var(--miss-text); }
+
+.hitrate-row {
+  display: flex; justify-content: space-between; align-items: baseline;
+  font-size: 13px; color: var(--text2); margin-bottom: 5px;
+}
+.hitrate-val { font-family: var(--mono); font-weight: 700; font-size: 15px; color: var(--text); }
+.bar-track {
+  height: 8px; background: var(--border); border-radius: 4px; overflow: hidden;
+}
+.bar-fill {
+  height: 100%; border-radius: 4px;
+  background: var(--hit-border);
+  transition: width 0.35s ease, background 0.35s;
+}
+
+
+/* Tabs */
+.tabs-header {
+  display: flex; gap: 8px; margin-bottom: 8px;
+}
+.tab-btn {
+  font-family: var(--sans); font-size: 11px; font-weight: 700;
+  padding: 4px 10px; border-radius: 4px;
+  background: var(--surface2); color: var(--text3);
+  border: 1px solid var(--border);
+  cursor: pointer; text-transform: uppercase; letter-spacing: 0.5px;
+  transition: all 0.2s;
+}
+.tab-btn.active {
+  background: var(--accent); color: #fff; border-color: var(--accent);
+}
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+.graph-bars {
+  display: flex; align-items: flex-end; gap: 15px; height: 120px;
+  margin-top: 10px; border-bottom: 2px solid var(--border); padding-bottom: 4px;
+}
+.gb-group {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px;
+}
+.gb-track {
+  width: 24px; height: 90px; background: var(--surface2); border-radius: 4px;
+  position: relative; overflow: hidden;
+}
+.gb-fill {
+  position: absolute; bottom: 0; left: 0; width: 100%;
+  background: var(--accent); transition: height 0.4s ease;
+}
+.gb-fill.lru { background: #3498db; }
+.gb-fill.mru { background: #e67e22; }
+.gb-fill.clock { background: #9b59b6; }
+.gb-lbl { font-size: 10px; font-family: var(--mono); color: var(--text2); font-weight: 700; }
+.gb-val { font-size: 11px; font-family: var(--mono); font-weight: bold; margin-bottom: 2px; }
+
+/* Catalog */
+.catalog-scroll {
+  flex: 1; min-height: 150px; overflow-y: auto; padding: 12px 16px 24px;
+  background: var(--tint-right);
+}
+.cat-empty { font-family: var(--mono); font-size: 13px; color: var(--text3); }
+.cat-table {
+  font-family: var(--mono); font-size: 12.5px;
+  padding: 8px 11px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 7px;
+  color: var(--text2);
+  background: var(--surface2);
+  line-height: 1.7;
+}
+.cat-name { color: var(--accent); font-weight: 700; font-size: 14px; }
+.cat-meta { color: var(--text3); font-size: 11px; }
+
+/* Topbar tagline (duplicate — keep only this one) */
+.brand-tag {
+  font-size: 13px;
+  color: rgba(255,255,255,0.5);
+  font-family: var(--sans);
+  font-weight: 400;
+  letter-spacing: 0;
+  border-left: 1px solid rgba(255,255,255,0.2);
+  padding-left: 12px;
+  margin-left: -4px;
+}
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<!-- TOP BAR -->
+<div class="topbar">
+  <div class="brand">Buf<span>Sim</span></div>
+  <span class="brand-tag">Buffer Pool Simulator</span>
+  <div class="sep"></div>
+  <div class="policy-group">
+    <button class="pbtn on" data-p="LRU"   onclick="setPolicy(this)">LRU</button>
+    <button class="pbtn"    data-p="MRU"   onclick="setPolicy(this)">MRU</button>
+    <button class="pbtn"    data-p="CLOCK" onclick="setPolicy(this)">CLOCK</button>
+    <button class="pbtn"    data-p="ALL"   onclick="setPolicy(this)">ALL</button>
+  </div>
+  <div class="sep"></div>
+  <div class="frames-row">
+    <span>buffer frames</span>
+    <input class="frames-input" type="number" id="framesIn" value="8" min="2" max="32"
+           onchange="applyFrames(this.value)" title="Number of buffer frames (2–32)">
+  </div>
+  <button class="reset-btn" onclick="doReset()">↺ Reset session</button>
+</div>
+
+<!-- MAIN -->
+<div class="main">
+
+  <!-- LEFT: SQL REPL -->
+  <div class="left">
+    <div class="pane-header">SQL Prompt</div>
+    <div class="repl-scroll" id="replScroll">
+      <div class="entry welcome">
+        <h2>BufSim — SQL Query Engine</h2>
+        <p>Buffer pool simulation with <code>LRU</code> · <code>MRU</code> · <code>CLOCK</code> replacement policies.</p>
+        <p style="margin-top:6px;">Supported statements:</p>
+        <p><code>CREATE TABLE t (col INT, col CHAR(N))</code> &nbsp;·&nbsp; <code>DROP TABLE t</code> &nbsp;·&nbsp; <code>ALTER TABLE t ADD col TYPE</code></p>
+        <p><code>INSERT INTO t VALUES (...)</code> &nbsp;·&nbsp; <code>UPDATE t SET col=val [WHERE ...]</code> &nbsp;·&nbsp; <code>DELETE FROM t [WHERE ...]</code></p>
+        <p><code>SELECT [DISTINCT] cols FROM t [WHERE ...] [ORDER BY ...] [LIMIT n]</code></p>
+        <p><code>SELECT ... FROM t1 JOIN t2 ON t1.col = t2.col</code> &nbsp;·&nbsp; <code>SHOW TABLES</code></p>
+        <p style="margin-top:8px; color:var(--text3);">Each SELECT / JOIN drives page-level buffer pool accesses. Buffer frame state updates on the right after every query.</p>
+      </div>
+    </div>
+    <div class="sql-bar">
+      <span class="sql-ps">SQL&gt;</span>
+      <textarea class="sql-input" id="sqlIn"
+             placeholder="Type SQL here… Enter to run, Shift+Enter for newline, ↑↓ for history"
+             autocomplete="off" spellcheck="false"></textarea>
+      <button class="run-btn" onclick="runSQL()">Run ↵</button>
+    </div>
+  </div>
+
+  <!-- RIGHT: BUFFER POOL + STATS + CATALOG -->
+  <div class="right">
+
+    <!-- Buffer frames -->
+    <div class="pane-header" style="display:flex; align-items:center; gap:8px;">
+      Buffer Pool
+      <span class="policy-badge" id="policyBadge">LRU</span>
+    </div>
+    <div class="section" id="frameSection">
+      
+      <div class="legend" id="legend">
+        <div class="leg"><div class="leg-dot" style="background:var(--hit-border)"></div>hit</div>
+        <div class="leg"><div class="leg-dot" style="background:var(--miss-border)"></div>miss (loaded)</div>
+        <div class="leg"><div class="leg-dot" style="background:var(--active-border)"></div>resident</div>
+        <div class="leg" id="legSC" style="display:none"><div class="leg-dot" style="background:var(--sc-border)"></div>2nd chance</div>
+        <div class="leg"><div class="leg-dot" style="background:var(--empty-border)"></div>empty</div>
+      </div>
+      <div class="clock-indicator" id="clockIndicator" style="display:none;">
+        clock hand → frame <span class="hand" id="clockHand">0</span>
+      </div>
+    </div>
+
+    <!-- Query stats -->
+    <div class="section" id="queryStatsSection">
+      <div class="tabs-header">
+        <button class="tab-btn active" onclick="switchTab('stats')">Stats</button>
+        <button class="tab-btn" onclick="switchTab('graphs')">Graphs</button>
+      </div>
+      
+      <div id="tab-stats" class="tab-content active">
+        <div class="stats-grid" id="statsGridSingle">
+          <div class="stat-card" style="border-color:var(--border); border-left: 3px solid var(--active-border); background: var(--active-bg);">
+            <div class="sc-lbl">Page accesses</div>
+            <div class="sc-num" id="sAccesses">—</div>
+          </div>
+          <div class="stat-card" style="border-color:var(--border); border-left: 3px solid var(--miss-border); background: var(--miss-bg);">
+            <div class="sc-lbl">Disk reads</div>
+            <div class="sc-num b" id="sDiskReads">—</div>
+          </div>
+          <div class="stat-card" style="border-color:var(--border); border-left: 3px solid var(--hit-border); background: var(--hit-bg);">
+            <div class="sc-lbl">Page hits</div>
+            <div class="sc-num g" id="sHits">—</div>
+          </div>
+          <div class="stat-card" style="border-color:var(--border); border-left: 3px solid var(--sc-border); background: var(--sc-bg);">
+            <div class="sc-lbl">Page misses</div>
+            <div class="sc-num" id="sMisses">—</div>
+          </div>
+        </div>
+        <div id="statsGridAll" style="display:none; font-family:var(--mono); font-size:12px; margin-bottom:8px;"></div>
+        <div class="hitrate-row" id="hitrateRowSingle">
+          <span>Hit rate</span>
+          <span class="hitrate-val" id="sHitRate">—</span>
+        </div>
+        <div class="bar-track" id="hitrateBarSingle">
+          <div class="bar-fill" id="barFill" style="width:0%"></div>
+        </div>
+      </div>
+      
+      <div id="tab-graphs" class="tab-content" style="padding-bottom:10px; overflow-y:auto; max-height:400px;">
+        <div style="font-size:12px; color:var(--text2); margin-top:5px; font-weight:bold">Page Hits Compare</div>
+        <div class="graph-bars" id="graphHits"></div>
+        <div style="font-size:12px; color:var(--text2); margin-top:15px; font-weight:bold">Page Misses Compare</div>
+        <div class="graph-bars" id="graphMisses"></div>
+        <div style="font-size:12px; color:var(--text2); margin-top:15px; font-weight:bold">Disk Reads Compare</div>
+        <div class="graph-bars" id="graphDiskReads"></div>
+      </div>
+    </div>
+
+    <!-- Session Query Statistics -->
+    <div class="section" id="sessionStatsSection">
+      <div class="section-label" style="margin-bottom:6px;">
+        Session Statistics
+        <button onclick="resetSessionStats()" style="margin-left:auto;font-size:11px;padding:3px 9px;border:1px solid var(--border2);border-radius:3px;background:var(--surface);color:var(--text2);cursor:pointer;">reset</button>
+      </div>
+      <div class="stats-grid" style="grid-template-columns:1fr 1fr 1fr; gap:5px; margin-bottom:8px;">
+        <div class="stat-card" style="border-left:3px solid var(--active-border);background:var(--active-bg);">
+          <div class="sc-lbl">Queries</div>
+          <div class="sc-num" id="ssQueries">0</div>
+        </div>
+        <div class="stat-card" style="border-left:3px solid var(--hit-border);background:var(--hit-bg);">
+          <div class="sc-lbl">Total Hits</div>
+          <div class="sc-num g" id="ssHits">0</div>
+        </div>
+        <div class="stat-card" style="border-left:3px solid var(--miss-border);background:var(--miss-bg);">
+          <div class="sc-lbl">Total Misses</div>
+          <div class="sc-num b" id="ssMisses">0</div>
+        </div>
+      </div>
+      <div class="hitrate-row">
+        <span>Session hit rate</span>
+        <span class="hitrate-val" id="ssHitRate">—</span>
+      </div>
+      <div class="bar-track">
+        <div class="bar-fill" id="ssBarFill" style="width:0%"></div>
+      </div>
+      <div style="margin-top:6px;font-family:var(--mono);font-size:12px;color:var(--text3);">
+        Total accesses: <span id="ssAccesses" style="color:var(--text2);font-weight:700;">0</span>
+        &nbsp;·&nbsp;
+        Disk reads: <span id="ssDiskReads" style="color:var(--miss-text);font-weight:700;">0</span>
+      </div>
+    </div>
+
+    <!-- Catalog -->
+    <div class="section-label" style="padding:8px 13px 0; margin-bottom:0;">Catalog</div>
+    <div class="catalog-scroll" id="catalogScroll">
+      <div class="cat-empty" id="catEmpty">No tables yet</div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+//  BUFFER POOL  (faithful JS port of C++ LRU / MRU / CLOCK)
+// ═══════════════════════════════════════════════════════════════
+const PAGE_SIZE = 4096;
+
+class BufferPool {
+  constructor(n, policy) {
+    this.n = n;
+    this.policy = policy;
+    this.frames = Array.from({length: n}, (_, i) => ({
+      id: i,
+      tid: null,   // table id
+      pn:  -1,     // page number
+      pin: 0,
+      sc:  false,  // second-chance bit
+      vis: 'empty' // 'empty'|'hit'|'miss'|'active'|'sc'
+    }));
+    this.map   = {};   // "tid:pn" -> frame index
+    this.order = [];   // LRU/MRU ordered list (front = most recent)
+    this.hand  = 0;    // CLOCK hand
+    this.stats = {accesses:0, diskReads:0, hits:0, misses:0};
+  }
+
+  clearStats()  { this.stats = {accesses:0, diskReads:0, hits:0, misses:0}; }
+
+  softReset() {
+    // dim all loaded frames to 'active' (no highlight from previous query)
+    for (const f of this.frames) {
+      if (f.tid !== null) {
+        f.vis = this.policy === 'CLOCK' && f.sc ? 'sc' : 'active';
+      }
+    }
+  }
+
+  getPage(tid, pn) {
+    this.stats.accesses++;
+    const key = `${tid}:${pn}`;
+    const existing = this.map[key];
+
+    if (existing !== undefined) {
+      // ── HIT ──
+      this.stats.hits++;
+      const f = this.frames[existing];
+      f.sc = true;
+      f.pin++;
+      f.vis = 'hit';
+      if (this.policy === 'LRU') {
+        this.order = this.order.filter(x => x !== existing);
+        this.order.unshift(existing);
+      } else if (this.policy === 'MRU') {
+        this.order = this.order.filter(x => x !== existing);
+        this.order.unshift(existing);
+      }
+      return existing;
+    }
+
+    // ── MISS ── need to evict / find empty slot
+    this.stats.diskReads++;
+    this.stats.misses++;
+    const victim = this._evict();
+    if (victim === -1) return -1;
+
+    const f = this.frames[victim];
+    if (f.tid !== null) delete this.map[`${f.tid}:${f.pn}`];
+    f.tid = tid; f.pn = pn; f.pin = 1; f.sc = true; f.vis = 'miss';
+    this.map[key] = victim;
+
+    if (this.policy === 'LRU' || this.policy === 'MRU') {
+      this.order = this.order.filter(x => x !== victim);
+      this.order.unshift(victim);
+    }
+    return victim;
+  }
+
+  unpinPage(tid, pn) {
+    const idx = this.map[`${tid}:${pn}`];
+    if (idx !== undefined && this.frames[idx].pin > 0) this.frames[idx].pin--;
+  }
+
+  invalidateTable(tid) {
+    for (const f of this.frames) {
+      if (f.tid === tid) {
+        delete this.map[`${f.tid}:${f.pn}`];
+        f.tid = null; f.pn = -1; f.pin = 0; f.sc = false; f.vis = 'empty';
+        this.order = this.order.filter(x => x !== f.id);
+      }
+    }
+  }
+
+  _evict() {
+    // empty slot?
+    for (const f of this.frames) if (f.tid === null) return f.id;
+
+    if (this.policy === 'LRU') {
+      for (let i = this.order.length - 1; i >= 0; i--) {
+        const idx = this.order[i];
+        if (this.frames[idx].pin === 0) { this.order.splice(i, 1); return idx; }
+      }
+      return -1;
+    }
+    if (this.policy === 'MRU') {
+      for (let i = 0; i < this.order.length; i++) {
+        const idx = this.order[i];
+        if (this.frames[idx].pin === 0) { this.order.splice(i, 1); return idx; }
+      }
+      return -1;
+    }
+    if (this.policy === 'CLOCK') {
+      // mirrors C++ ClockBufferManager exactly: 2*n scan limit
+      let scanned = 0;
+      while (scanned < 2 * this.n) {
+        const h = this.hand;
+        this.hand = (this.hand + 1) % this.n;
+        const f = this.frames[h];
+        if (f.pin > 0) { scanned++; continue; }
+        if (f.sc) { f.sc = false; f.vis = f.tid !== null ? 'active' : 'empty'; scanned++; continue; }
+        return h;
+      }
+      return -1;
+    }
+    return -1;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  IN-MEMORY SQL ENGINE
+// ═══════════════════════════════════════════════════════════════
+const db = { tables: {}, tids: {}, nextTid: 1 };
+let activePools = [new BufferPool(8, 'LRU')];
+let curPolicy = 'LRU', curFrames = 8;
+
+// ── Session statistics (cumulative across all SELECT queries) ──
+const sessionStats = {queries:0, accesses:0, hits:0, misses:0, diskReads:0};
+
+function resetSessionStats() {
+  sessionStats.queries = 0; sessionStats.accesses = 0;
+  sessionStats.hits = 0; sessionStats.misses = 0; sessionStats.diskReads = 0;
+  renderSessionStats();
+}
+
+function addToSessionStats(stats) {
+  const s = Array.isArray(stats) ? stats[0] : stats; // Track primary/first pool (LRU for ALL) in session stats
+  sessionStats.queries++;
+  sessionStats.accesses += s.accesses;
+  sessionStats.hits     += s.hits;
+  sessionStats.misses   += s.misses;
+  sessionStats.diskReads+= s.diskReads;
+  renderSessionStats();
+}
+
+function renderSessionStats() {
+  document.getElementById('ssQueries').textContent   = sessionStats.queries;
+  document.getElementById('ssHits').textContent      = sessionStats.hits;
+  document.getElementById('ssMisses').textContent    = sessionStats.misses;
+  document.getElementById('ssAccesses').textContent  = sessionStats.accesses;
+  document.getElementById('ssDiskReads').textContent = sessionStats.diskReads;
+  const rate = sessionStats.accesses > 0 ? (sessionStats.hits / sessionStats.accesses * 100) : 0;
+  document.getElementById('ssHitRate').textContent   = sessionStats.accesses > 0 ? rate.toFixed(2)+'%' : '—';
+  document.getElementById('ssBarFill').style.width   = rate.toFixed(1)+'%';
+  document.getElementById('ssBarFill').style.background = rate >= 50 ? 'var(--hit-border)' : 'var(--miss-border)';
+}
+
+function tid(name) {
+  if (!db.tids[name]) db.tids[name] = db.nextTid++;
+  return db.tids[name];
+}
+
+// page geometry
+function recSize(table) {
+  return 4 + table.cols.reduce((s, c) => s + (c.type === 'INT' ? 4 : Number(c.size)), 0);
+}
+function pageCap(table) { return Math.max(1, Math.floor((PAGE_SIZE - 4) / recSize(table))); }
+function pageCount(table) { return Math.max(1, Math.ceil(table.rows.length / pageCap(table))); }
+
+// ── tokenizer ──
+function tok(sql) {
+  return [...sql.matchAll(/'[^']*'|"[^"]*"|[(),*]|<>|>=|<=|!=|[<>=]|[^\s(),*'"<>=!]+/g)].map(m => m[0]);
+}
+function val(s) {
+  if (!s) return null;
+  if (s.startsWith("'") && s.endsWith("'")) return s.slice(1, -1);
+  if (s.toUpperCase() === 'NULL') return null;
+  const n = Number(s);
+  return isNaN(n) ? s : n;
+}
+
+// ── WHERE evaluator ──
+function evalWhere(row, cols, conds) {
+  if (!conds || !conds.length) return true;
+  let result = null;
+  for (const c of conds) {
+    const ci = cols.findIndex(x => x.name.toLowerCase() === c.col.toLowerCase() || x.name.toLowerCase().endsWith('.'+c.col.toLowerCase()));
+    const rv = ci !== -1 ? row[ci] : null;
+    let m = false;
+    const cv = c.val;
+    switch (c.op) {
+      case '=':  case '==': m = String(rv).toLowerCase() === String(cv).toLowerCase(); break;
+      case '!=': case '<>': m = String(rv).toLowerCase() !== String(cv).toLowerCase(); break;
+      case '>':  m = Number(rv) > Number(cv); break;
+      case '<':  m = Number(rv) < Number(cv); break;
+      case '>=': m = Number(rv) >= Number(cv); break;
+      case '<=': m = Number(rv) <= Number(cv); break;
+      case 'LIKE': {
+        const p = String(cv).replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*').replace(/_/g, '.');
+        m = new RegExp(`^${p}$`, 'i').test(String(rv ?? ''));
+        break;
+      }
+      case 'IS NULL':     m = rv === null || rv === undefined; break;
+      case 'IS NOT NULL': m = rv !== null && rv !== undefined; break;
+    }
+    if (result === null) result = m;
+    // c.joinOp is how THIS condition joins with the PREVIOUS result
+    else if (c.joinOp === 'OR') result = result || m;
+    else result = result && m;
+  }
+  return result !== null ? result : true;
+}
+
+function parseWhere(tokens, i) {
+  const conds = [];
+  let pendingJoin = 'AND'; // default join for first real condition is irrelevant, but track for next
+  while (i < tokens.length) {
+    const tu = tokens[i].toUpperCase();
+    if (['GROUP','ORDER','HAVING','LIMIT','OFFSET','JOIN','ON'].includes(tu)) break;
+    if (tu === 'AND' || tu === 'OR') {
+      pendingJoin = tu;
+      i++; continue;
+    }
+    const col = tokens[i]; i++;
+    if (i >= tokens.length) break;
+    let op = tokens[i].toUpperCase(); i++;
+    if (op === 'IS') {
+      if (tokens[i]?.toUpperCase() === 'NOT') { i++; i++; conds.push({col, op:'IS NOT NULL', val:null, joinOp: pendingJoin}); }
+      else { i++; conds.push({col, op:'IS NULL', val:null, joinOp: pendingJoin}); }
+      pendingJoin = 'AND';
+      continue;
+    }
+    const v = val(tokens[i]); i++;
+    conds.push({col, op, val:v, joinOp: pendingJoin});
+    pendingJoin = 'AND';
+  }
+  return {conds, i};
+}
+
+// ── paren-aware SELECT expression collector ──
+// Keeps COUNT(*) as one token instead of splitting on commas inside parens.
+function collectExprs(ts, start, end) {
+  const exprs = [];
+  let depth = 0, cur = [];
+  for (let i = start; i < end; i++) {
+    const t = ts[i];
+    if (t === '(') { depth++; cur.push(t); }
+    else if (t === ')') { depth--; cur.push(t); }
+    else if (t === ',' && depth === 0) {
+      if (cur.length) exprs.push(cur.join(''));
+      cur = [];
+    } else {
+      if (cur.length && cur[cur.length-1] !== '(' && t !== ')') cur.push(' ');
+      cur.push(t);
+    }
+  }
+  if (cur.length) exprs.push(cur.join(''));
+  return exprs.map(e => e.trim()).filter(Boolean);
+}
+
+// ── project a group of rows into one output row (handles aggregates + aliases) ──
+function projectGroup(group, cols, selExprs) {
+  const headers = [], row = [];
+  for (const expr of selExprs) {
+    const aggM = expr.match(/^(COUNT|SUM|AVG|MIN|MAX)\s*\(\s*([^)]*)\s*\)(?:\s+AS\s+(\S+))?$/i);
+    if (aggM) {
+      const fn = aggM[1].toUpperCase();
+      const ac = aggM[2].trim();
+      const alias = aggM[3] || `${fn}(${ac})`;
+      headers.push(alias);
+      const ci = (ac === '*') ? -1 : cols.findIndex(c => c.name.toLowerCase() === ac.toLowerCase());
+      let v;
+      switch (fn) {
+        case 'COUNT': v = group.length; break;
+        case 'SUM':   v = group.reduce((s,r) => s + (Number(r[ci]) || 0), 0); break;
+        case 'AVG': {
+          const sum = group.reduce((s,r) => s + (Number(r[ci]) || 0), 0);
+          v = group.length ? parseFloat((sum / group.length).toFixed(2)) : null; break;
+        }
+        case 'MIN': v = group.length ? group.reduce((m,r) => r[ci] < m ? r[ci] : m, group[0][ci]) : null; break;
+        case 'MAX': v = group.length ? group.reduce((m,r) => r[ci] > m ? r[ci] : m, group[0][ci]) : null; break;
+      }
+      row.push(v ?? null);
+    } else {
+      const asParts = expr.match(/^(.+?)\s+AS\s+(\S+)$/i);
+      const cname = asParts ? asParts[1].trim() : expr;
+      const alias = asParts ? asParts[2] : expr;
+      headers.push(alias);
+      const ci = cols.findIndex(c =>
+        c.name.toLowerCase() === cname.toLowerCase() ||
+        c.name.toLowerCase().endsWith('.' + cname.toLowerCase())
+      );
+      row.push(ci !== -1 ? (group[0]?.[ci] ?? null) : null);
+    }
+  }
+  return {headers, row};
+}
+
+// read all pages of a table through the buffer pool (simulates SELECT scan)
+function scanTable(tableName) {
+  const t = db.tables[tableName];
+  if (!t) return;
+  const id = tid(tableName);
+  const np = pageCount(t);
+  for (let p = 0; p < np; p++) {
+    for (const p_obj of activePools) {
+      p_obj.getPage(id, p);
+      p_obj.unpinPage(id, p);
+    }
+  }
+}
+
+// ── EXECUTE ──
+function exec(raw) {
+  const sql = raw.trim().replace(/;$/, '');
+  if (!sql) return null;
+  const ts = tok(sql);
+  if (!ts.length) return null;
+  const cmd = ts[0].toUpperCase();
+
+  // SHOW TABLES
+  if (cmd === 'SHOW' && ts[1]?.toUpperCase() === 'TABLES') {
+    const names = Object.keys(db.tables).sort();
+    if (!names.length) return {kind:'inf', text:'(no tables)'};
+    return {kind:'inf', text:'Tables:\n' + names.map(n => {
+      const t = db.tables[n];
+      const cs = t.cols.map(c => c.type==='CHAR' ? `${c.name} CHAR(${c.size})` : `${c.name} ${c.type}`).join(', ');
+      return `  ${n} (${cs})`;
+    }).join('\n')};
+  }
+
+  // CREATE TABLE
+  if (cmd === 'CREATE' && ts[1]?.toUpperCase() === 'TABLE') {
+    const name = ts[2].toLowerCase();
+    if (db.tables[name]) return {kind:'err', text:`Table '${name}' already exists.`};
+    const op = ts.indexOf('('), cp = ts.lastIndexOf(')');
+    if (op === -1 || cp === -1) return {kind:'err', text:'Syntax error: missing parentheses.'};
+    const cts = ts.slice(op+1, cp);
+    const cols = [];
+    for (let i = 0; i < cts.length; ) {
+      if (cts[i] === ',') { i++; continue; }
+      const cname = cts[i].toLowerCase(); i++;
+      const ctype = cts[i]?.toUpperCase(); i++;
+      if (ctype === 'CHAR') {
+        i++; // (
+        const sz = parseInt(cts[i]); i++;
+        i++; // )
+        cols.push({name:cname, type:'CHAR', size:sz});
+      } else {
+        cols.push({name:cname, type:'INT', size:4});
+      }
+    }
+    db.tables[name] = {cols, rows:[]};
+    tid(name);
+    return {kind:'ok', text:`Table '${name}' created with ${cols.length} column(s).`};
+  }
+
+  // DROP TABLE
+  if (cmd === 'DROP' && ts[1]?.toUpperCase() === 'TABLE') {
+    const name = ts[2].toLowerCase();
+    if (!db.tables[name]) return {kind:'err', text:`Table '${name}' does not exist.`};
+    activePools.forEach(p => p.invalidateTable(tid(name)));
+    delete db.tables[name];
+    return {kind:'ok', text:`Table '${name}' dropped.`};
+  }
+
+  // ALTER TABLE t ADD [COLUMN] col TYPE
+  if (cmd === 'ALTER' && ts[1]?.toUpperCase() === 'TABLE') {
+    const name = ts[2].toLowerCase();
+    const t = db.tables[name];
+    if (!t) return {kind:'err', text:`Table '${name}' does not exist.`};
+    if (ts[3]?.toUpperCase() === 'ADD') {
+      let ci = 4;
+      if (ts[ci]?.toUpperCase() === 'COLUMN') ci++;
+      const cname = ts[ci].toLowerCase(); ci++;
+      const ctype = ts[ci]?.toUpperCase(); ci++;
+      if (ctype === 'CHAR') {
+        ci++; const sz = parseInt(ts[ci]); ci++; ci++;
+        t.cols.push({name:cname, type:'CHAR', size:sz});
+      } else {
+        t.cols.push({name:cname, type:'INT', size:4});
+      }
+      t.rows.forEach(r => r.push(null));
+      activePools.forEach(p => p.invalidateTable(tid(name)));
+      return {kind:'ok', text:`Column '${cname}' added to '${name}'.`};
+    }
+    return {kind:'err', text:'Unsupported ALTER operation.'};
+  }
+
+  // INSERT INTO t [(cols)] VALUES (vals)
+  if (cmd === 'INSERT') {
+    const name = ts[2].toLowerCase();
+    const t = db.tables[name];
+    if (!t) return {kind:'err', text:`Table '${name}' does not exist.`};
+    const vi = ts.findIndex(x => x.toUpperCase() === 'VALUES');
+    if (vi === -1) return {kind:'err', text:"Missing VALUES keyword."};
+    let targetCols = t.cols.map(c => c.name);
+    if (ts[3] === '(') {
+      const cp = ts.indexOf(')', 3);
+      targetCols = ts.slice(4, cp).filter(x => x !== ',').map(x => x.toLowerCase());
+    }
+    const ov = ts.indexOf('(', vi);
+    const cv = ts.lastIndexOf(')');
+    const vals = ts.slice(ov+1, cv).filter(x => x !== ',').map(val);
+    const row = t.cols.map(c => {
+      const i = targetCols.indexOf(c.name);
+      return i === -1 ? null : vals[i];
+    });
+    t.rows.push(row);
+    activePools.forEach(p => p.invalidateTable(tid(name)));
+    return {kind:'ok', text:`1 row inserted. (${t.rows.length} total in '${name}')`};
+  }
+
+  // UPDATE t SET col=val [WHERE ...]
+  if (cmd === 'UPDATE') {
+    const name = ts[1].toLowerCase();
+    const t = db.tables[name];
+    if (!t) return {kind:'err', text:`Table '${name}' does not exist.`};
+    const si = ts.findIndex(x => x.toUpperCase() === 'SET');
+    const wi = ts.findIndex(x => x.toUpperCase() === 'WHERE');
+    if (si === -1) return {kind:'err', text:"Missing SET keyword."};
+    const setTs = ts.slice(si+1, wi === -1 ? undefined : wi);
+    const updates = {};
+    for (let i = 0; i < setTs.length; ) {
+      if (setTs[i] === ',') { i++; continue; }
+      const col = setTs[i].toLowerCase(); i++;
+      i++; // '='
+      updates[col] = val(setTs[i]); i++;
+    }
+    const conds = wi !== -1 ? parseWhere(ts, wi+1).conds : [];
+    let n = 0;
+    for (const r of t.rows) {
+      if (evalWhere(r, t.cols, conds)) {
+        for (const [col, v] of Object.entries(updates)) {
+          const ci = t.cols.findIndex(c => c.name === col);
+          if (ci !== -1) r[ci] = v;
+        }
+        n++;
+      }
+    }
+    activePools.forEach(p => p.invalidateTable(tid(name)));
+    return {kind:'ok', text:`${n} row(s) updated in '${name}'.`};
+  }
+
+  // DELETE FROM t [WHERE ...]
+  if (cmd === 'DELETE') {
+    const name = ts[2].toLowerCase();
+    const t = db.tables[name];
+    if (!t) return {kind:'err', text:`Table '${name}' does not exist.`};
+    const wi = ts.findIndex(x => x.toUpperCase() === 'WHERE');
+    const conds = wi !== -1 ? parseWhere(ts, wi+1).conds : [];
+    const before = t.rows.length;
+    t.rows = t.rows.filter(r => !evalWhere(r, t.cols, conds));
+    activePools.forEach(p => p.invalidateTable(tid(name)));
+    return {kind:'ok', text:`${before - t.rows.length} row(s) deleted from '${name}'.`};
+  }
+
+  // SELECT
+  if (cmd === 'SELECT') {
+    const fi = ts.findIndex(x => x.toUpperCase() === 'FROM');
+    if (fi === -1) return {kind:'err', text:"Missing FROM clause."};
+    const distinct = ts[1]?.toUpperCase() === 'DISTINCT';
+    // collectExprs keeps COUNT(*) as one expression
+    const selExprs = collectExprs(ts, distinct ? 2 : 1, fi);
+    const tname = ts[fi+1].toLowerCase();
+    const t = db.tables[tname];
+    if (!t) return {kind:'err', text:`Table '${tname}' does not exist.`};
+
+    activePools.forEach(p => { p.clearStats(); p.softReset(); });
+
+    // JOIN?
+    const ji = ts.findIndex(x => x.toUpperCase() === 'JOIN');
+    let rows, cols;
+
+    if (ji !== -1) {
+      const jname = ts[ji+1].toLowerCase();
+      const jt = db.tables[jname];
+      if (!jt) return {kind:'err', text:`Table '${jname}' does not exist.`};
+      scanTable(tname);
+      scanTable(jname);
+      const oi2 = ts.findIndex(x => x.toUpperCase() === 'ON');
+      const lhs = ts[oi2+1], rhs = ts[oi2+3];
+      const lCol = lhs.includes('.') ? lhs.split('.')[1] : lhs;
+      const rCol = rhs.includes('.') ? rhs.split('.')[1] : rhs;
+      const li2 = t.cols.findIndex(c => c.name === lCol);
+      const ri2 = jt.cols.findIndex(c => c.name === rCol);
+      cols = [
+        ...t.cols.map(c => ({name:`${tname}.${c.name}`, type:c.type, size:c.size})),
+        ...jt.cols.map(c => ({name:`${jname}.${c.name}`, type:c.type, size:c.size}))
+      ];
+      rows = [];
+      for (const r1 of t.rows) for (const r2 of jt.rows)
+        if (r1[li2] == r2[ri2]) rows.push([...r1, ...r2]);
+    } else {
+      scanTable(tname);
+      cols = t.cols;
+      rows = t.rows.map(r => [...r]);
+    }
+
+    // WHERE
+    const wi = ts.findIndex(x => x.toUpperCase() === 'WHERE');
+    const gi = ts.findIndex(x => x.toUpperCase() === 'GROUP');
+    const oi = ts.findIndex(x => x.toUpperCase() === 'ORDER');
+    const li = ts.findIndex(x => x.toUpperCase() === 'LIMIT');
+
+    if (wi !== -1) {
+      const {conds} = parseWhere(ts, wi + 1);
+      rows = rows.filter(r => evalWhere(r, cols, conds));
+    }
+
+    // GROUP BY
+    const groupCols = [];
+    if (gi !== -1 && ts[gi+1]?.toUpperCase() === 'BY') {
+      let gci = gi + 2;
+      while (gci < ts.length) {
+        const tu = ts[gci].toUpperCase();
+        if (['ORDER','HAVING','LIMIT','OFFSET'].includes(tu)) break;
+        if (ts[gci] !== ',') groupCols.push(ts[gci].toLowerCase());
+        gci++;
+      }
+    }
+
+    const hasAgg = selExprs.some(e => /^(COUNT|SUM|AVG|MIN|MAX)\s*\(/i.test(e));
+    // non-aggregate expressions in SELECT alongside aggregates
+    const hasNonAgg = selExprs.some(e => !/^(COUNT|SUM|AVG|MIN|MAX)\s*\(/i.test(e));
+
+    let outCols, outRows, aggWarning = null;
+
+    if (selExprs[0] === '*') {
+      outCols = cols.map(c => c.name);
+      outRows = rows;
+    } else if (hasAgg) {
+      // Proper aggregate grouping
+      let groups;
+      if (groupCols.length > 0) {
+        const gmap = new Map();
+        for (const r of rows) {
+          const key = groupCols.map(gc => {
+            const ci = cols.findIndex(c => c.name.toLowerCase() === gc);
+            return String(r[ci] ?? '');
+          }).join('\x00');
+          if (!gmap.has(key)) gmap.set(key, []);
+          gmap.get(key).push(r);
+        }
+        groups = [...gmap.values()];
+      } else {
+        groups = [rows];
+        // Warn if non-aggregate cols selected without GROUP BY
+        if (hasNonAgg) {
+          aggWarning = 'Note: non-aggregate columns without GROUP BY return values from an arbitrary row (SQL standard: use GROUP BY).';
+        }
+      }
+      const first = projectGroup(groups[0] || [], cols, selExprs);
+      outCols = first.headers;
+      outRows = groups.map(g => projectGroup(g, cols, selExprs).row);
+    } else {
+      // Plain projection
+      if (rows.length === 0) {
+        outCols = projectGroup([], cols, selExprs).headers;
+        outRows = [];
+      } else {
+        outCols = projectGroup([rows[0]], cols, selExprs).headers;
+        outRows = rows.map(r => projectGroup([r], cols, selExprs).row);
+      }
+    }
+
+    // DISTINCT after projection
+    if (distinct) {
+      const seen = new Set();
+      outRows = outRows.filter(r => {
+        const k = JSON.stringify(r);
+        if (seen.has(k)) return false;
+        seen.add(k); return true;
+      });
+    }
+
+    // ORDER BY
+    if (oi !== -1 && ts[oi+1]?.toUpperCase() === 'BY') {
+      const ocol = ts[oi+2];
+      const desc = ts[oi+3]?.toUpperCase() === 'DESC';
+      const ci = outCols
+        ? outCols.findIndex(c => c.toLowerCase() === ocol.toLowerCase() ||
+                                 c.toLowerCase().includes(ocol.toLowerCase()))
+        : -1;
+      if (ci >= 0) outRows.sort((a, b) => {
+        const av = a[ci], bv = b[ci];
+        const d = av < bv ? -1 : av > bv ? 1 : 0;
+        return desc ? -d : d;
+      });
+    }
+
+    // LIMIT / OFFSET
+    if (li !== -1) {
+      const lim = parseInt(ts[li+1]);
+      const offi = ts.findIndex(x => x.toUpperCase() === 'OFFSET');
+      const off = offi !== -1 ? parseInt(ts[offi+1]) : 0;
+      outRows = outRows.slice(off, off + lim);
+    }
+
+    const stats = curPolicy === 'ALL' ? activePools.map(p => ({policy: p.policy, ...p.stats})) : {...activePools[0].stats};
+    return {kind:'table', cols: outCols || [], rows: outRows, tname, stats, warning: aggWarning};
+  }
+
+  return {kind:'err', text:`Unknown command: '${ts[0]}'`};
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  UI RENDERING
+// ═══════════════════════════════════════════════════════════════
+
+function renderFrames() {
+  const container = document.getElementById('frameSection');
+  
+  // We recreate the frame grids dynamically
+  // First, find and preserve the legend and clockIndicator
+  const legend = document.getElementById('legend');
+  const clockInd = document.getElementById('clockIndicator');
+  
+  // Clear any existing frame grids
+  container.querySelectorAll('.frame-grid-wrapper').forEach(e => e.remove());
+  
+  // Render grids based on activePools
+  activePools.slice().reverse().forEach(p => {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'frame-grid-wrapper';
+    if (curPolicy === 'ALL') {
+      wrapper.innerHTML = `<div style="font-size:11px; font-weight:bold; color:var(--text2); margin-top:5px; margin-bottom:2px;">${p.policy}</div>`;
+    }
+    const grid = document.createElement('div');
+    grid.className = 'frame-grid';
+    
+    for (const f of p.frames) {
+      const el = document.createElement('div');
+      el.className = `frame ${f.vis}`;
+      if (p.policy === 'CLOCK' && p.hand === f.id && f.tid !== null) el.classList.add('clock-ptr');
+      const tname = f.tid !== null ? (Object.entries(db.tids).find(([k,v]) => v === f.tid)?.[0] || '?') : '';
+      el.title = f.tid !== null ? `f${f.id}: table=${tname}, page=${f.pn}, pin=${f.pin}${f.sc ? ', 2nd-chance' : ''}` : `f${f.id}: empty`;
+      el.innerHTML = `<span class="fid">f${f.id}</span><span class="fpg">${f.pn >= 0 ? 'p'+f.pn : '—'}</span><span class="ftbl">${tname}</span>`;
+      if (curPolicy === 'ALL') {
+         el.style.width = '42px'; el.style.height = '38px'; el.style.fontSize = '8px';
+         el.querySelector('.fpg').style.fontSize = '10px';
+      }
+      grid.appendChild(el);
+    }
+    wrapper.appendChild(grid);
+    container.insertBefore(wrapper, legend); // insert before legend
+  });
+
+  document.getElementById('policyBadge').textContent = curPolicy;
+
+  if (curPolicy === 'CLOCK') {
+    clockInd.style.display = 'flex';
+    document.getElementById('clockHand').textContent = activePools[0].hand;
+    document.getElementById('legSC').style.display = 'flex';
+  } else {
+    clockInd.style.display = 'none';
+    document.getElementById('legSC').style.display = curPolicy === 'ALL' ? 'flex' : 'none';
+  }
+}
+
+function switchTab(tabId) {
+  document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  document.querySelector(`.tab-btn[onclick*="${tabId}"]`).classList.add('active');
+  document.getElementById(`tab-${tabId}`).classList.add('active');
+}
+
+function renderStats(stats) {
+  const gAll = document.getElementById('statsGridAll');
+  const gSingle = document.getElementById('statsGridSingle');
+  const hrSing = document.getElementById('hitrateRowSingle');
+  const hrBarSing = document.getElementById('hitrateBarSingle');
+
+  if (!stats) {
+    gSingle.style.display = 'grid'; gAll.style.display = 'none';
+    hrSing.style.display = 'flex'; hrBarSing.style.display = 'block';
+    ['sAccesses','sDiskReads','sHits','sMisses'].forEach(id => document.getElementById(id).textContent = '—');
+    document.getElementById('sHitRate').textContent = '—';
+    document.getElementById('barFill').style.width = '0%';
+    document.getElementById('barFill').style.background = 'var(--border2)';
+    renderGraphs([]);
+    return;
+  }
+
+  if (Array.isArray(stats)) {
+    // ALL mode
+    gSingle.style.display = 'none';
+    hrSing.style.display = 'none'; hrBarSing.style.display = 'none';
+    gAll.style.display = 'block';
+    
+    let html = `<table style="width:100%; border-collapse:collapse; text-align:right;">
+      <tr style="color:var(--text3); border-bottom:1px solid var(--border);"><th style="text-align:left">Pol</th><th>Acc</th><th>Disk</th><th>Hits</th><th>Miss</th><th>Rate</th></tr>`;
+    stats.forEach(s => {
+      const rate = s.accesses > 0 ? (s.hits / s.accesses * 100).toFixed(1) : '0.0';
+      html += `<tr><td style="text-align:left; font-weight:bold; color:var(--accent)">${s.policy}</td>
+      <td>${s.accesses}</td><td>${s.diskReads}</td><td style="color:var(--hit-text)">${s.hits}</td>
+      <td style="color:var(--miss-text)">${s.misses}</td><td>${rate}%</td></tr>`;
+    });
+    html += `</table>`;
+    gAll.innerHTML = html;
+    
+    // Render graphs (Compare Misses)
+    renderGraphs(stats);
+  } else {
+    // Single mode
+    gSingle.style.display = 'grid'; gAll.style.display = 'none';
+    hrSing.style.display = 'flex'; hrBarSing.style.display = 'block';
+    
+    document.getElementById('sAccesses').textContent = stats.accesses;
+    document.getElementById('sDiskReads').textContent = stats.diskReads;
+    document.getElementById('sHits').textContent = stats.hits;
+    document.getElementById('sMisses').textContent = stats.misses;
+    const rate = stats.accesses > 0 ? stats.hits / stats.accesses * 100 : 0;
+    document.getElementById('sHitRate').textContent = rate.toFixed(2) + '%';
+    document.getElementById('barFill').style.width = rate.toFixed(1) + '%';
+    document.getElementById('barFill').style.background = rate >= 50 ? 'var(--hit-border)' : 'var(--miss-border)';
+    
+    renderGraphs([{policy: curPolicy, ...stats}]);
+  }
+}
+
+function renderGraphs(statsArr) {
+  const cMisses = document.getElementById('graphMisses');
+  const cHits = document.getElementById('graphHits');
+  const cDisk = document.getElementById('graphDiskReads');
+  if(!cMisses) return;
+  cMisses.innerHTML = ''; cHits.innerHTML = ''; cDisk.innerHTML = '';
+  if (statsArr.length === 0) return;
+  
+  const mMiss = Math.max(...statsArr.map(s => s.misses), 1);
+  const mHits = Math.max(...statsArr.map(s => s.hits), 1);
+  const mDisk = Math.max(...statsArr.map(s => s.diskReads), 1);
+  
+  const drawBars = (cont, maxV, key) => {
+    statsArr.forEach(s => {
+      const p = s[key] / maxV * 100;
+      const grp = document.createElement('div'); grp.className = 'gb-group';
+      grp.innerHTML = `
+        <div class="gb-val">${s[key]}</div>
+        <div class="gb-track"><div class="gb-fill ${s.policy.toLowerCase()}" style="height:${p}%"></div></div>
+        <div class="gb-lbl">${s.policy}</div>
+      `;
+      cont.appendChild(grp);
+    });
+  };
+  drawBars(cMisses, mMiss, 'misses');
+  drawBars(cHits, mHits, 'hits');
+  drawBars(cDisk, mDisk, 'diskReads');
+}
+
+
+function renderCatalog() {
+  const el = document.getElementById('catalogScroll');
+  const names = Object.keys(db.tables).sort();
+  const empty = document.getElementById('catEmpty');
+  if (!names.length) {
+    empty.style.display = 'block';
+    // remove any old cat-table nodes
+    [...el.querySelectorAll('.cat-table')].forEach(n => n.remove());
+    return;
+  }
+  empty.style.display = 'none';
+  [...el.querySelectorAll('.cat-table')].forEach(n => n.remove());
+  for (const n of names) {
+    const t = db.tables[n];
+    const cs = t.cols.map(c => c.type==='CHAR' ? `${c.name} CHAR(${c.size})` : `${c.name} ${c.type}`).join(', ');
+    const pc = pageCount(t), cap = pageCap(t);
+    const div = document.createElement('div');
+    div.className = 'cat-table';
+    div.innerHTML = `<div class="cat-name">${n}</div><div>${cs}</div><div class="cat-meta">${t.rows.length} rows · ${pc} page${pc!==1?'s':''} · ${cap} rec/page · ${recSize(t)}B/rec</div>`;
+    el.appendChild(div);
+  }
+}
+
+// ── table formatter ──
+function fmtTable(cols, rows) {
+  if (!rows.length) return '(0 rows returned)';
+  const w = cols.map((c,i) => Math.max(String(c).length, ...rows.map(r => String(r[i]??'NULL').length)));
+  const sep = w.map(x => '─'.repeat(x+2)).join('┼');
+  const hdr = cols.map((c,i) => ' '+String(c).padEnd(w[i])+' ').join('│');
+  const body = rows.map(r => r.map((v,i) => ' '+String(v??'NULL').padEnd(w[i])+' ').join('│')).join('\n');
+  return `${hdr}\n${sep}\n${body}\n\n(${rows.length} row${rows.length!==1?'s':''})`;
+}
+
+function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ── append entry to REPL ──
+function appendEntry(cmd, result) {
+  const scroll = document.getElementById('replScroll');
+  const entry = document.createElement('div');
+  entry.className = 'entry';
+
+  entry.innerHTML = `<div class="cmd-line"><span class="prompt">SQL&gt;</span><span class="cmd-text">${esc(cmd)}</span></div>`;
+
+  if (result) {
+    if (result.kind === 'table') {
+      const rb = document.createElement('div');
+      rb.className = 'result-block ok';
+      rb.textContent = fmtTable(result.cols, result.rows);
+      entry.appendChild(rb);
+
+      if (result.warning) {
+        const wb = document.createElement('div');
+        wb.className = 'result-block inf';
+        wb.textContent = '⚠ ' + result.warning;
+        entry.appendChild(wb);
+      }
+
+      const sb = document.createElement('div');
+      sb.className = 'stats-block';
+      
+      if (Array.isArray(result.stats)) {
+         sb.innerHTML = `<div class="stats-title">─── Comparative Buffer Stats [${result.tname.toUpperCase()}] ───</div>
+         <table style="width:100%;text-align:right;margin-top:5px;font-size:12px;">
+         <tr style="color:var(--text3); border-bottom:1px solid rgba(0,0,0,0.1)">
+           <th style="text-align:left">Pol</th><th>Acc</th><th>Disk</th><th>Hit</th><th>Miss</th><th>Rate</th></tr>
+         ${result.stats.map(s => `<tr>
+           <td style="text-align:left;font-weight:bold">${s.policy}</td>
+           <td>${s.accesses}</td><td>${s.diskReads}</td><td class="g">${s.hits}</td><td class="b">${s.misses}</td>
+           <td>${s.accesses > 0 ? (s.hits/s.accesses*100).toFixed(1) : '0.0'}%</td>
+         </tr>`).join('')}
+         </table>`;
+      } else {
+          const {accesses, diskReads, hits, misses} = result.stats;
+          const rate = accesses > 0 ? (hits/accesses*100).toFixed(2) : '0.00';
+          sb.innerHTML = `
+            <div class="stats-title">─── Buffer Stats [${result.tname.toUpperCase()}] ───</div>
+            <div class="srow"><span class="sk">Page Accesses </span><span class="sv">${accesses}</span></div>
+            <div class="srow"><span class="sk">Disk Reads    </span><span class="sv b">${diskReads}</span></div>
+            <div class="srow"><span class="sk">Page Hits     </span><span class="sv g">${hits}</span></div>
+            <div class="srow"><span class="sk">Page Misses   </span><span class="sv">${misses}</span></div>
+            <div class="srow"><span class="sk">Hit Rate      </span><span class="sv ${parseFloat(rate)>=50?'g':'b'}">${rate}%</span></div>`;
+      }
+      entry.appendChild(sb);
+    } else {
+      const rb = document.createElement('div');
+      rb.className = `result-block ${result.kind === 'err' ? 'err' : result.kind === 'ok' ? 'ok' : 'inf'}`;
+      rb.textContent = result.text;
+      entry.appendChild(rb);
+    }
+  }
+
+  scroll.appendChild(entry);
+  scroll.scrollTop = scroll.scrollHeight;
+}
+
+// ── commands ──
+function runSQL() {
+  const inp = document.getElementById('sqlIn');
+  const raw = inp.value.trim();
+  if (!raw) return;
+  hist.unshift(raw); histIdx = -1;
+  inp.value = '';
+
+  // Split on newlines so multiple statements can be pasted at once
+  const statements = raw.split('\n').map(s => s.trim()).filter(s => s.length > 0);
+
+  let lastResult = null;
+  for (const sql of statements) {
+    const result = exec(sql);
+    appendEntry(sql, result);
+    lastResult = result;
+    if (result?.stats) {
+      renderStats(result.stats);
+      addToSessionStats(result.stats);
+    }
+    else if (/^(CREATE|UPDATE|DELETE|DROP|ALTER|INSERT)/i.test(sql)) {
+      renderStats(null);
+    }
+  }
+
+  renderFrames();
+  renderCatalog();
+}
+
+function _initPools() {
+  if (curPolicy === 'ALL') {
+    activePools = [new BufferPool(curFrames, 'LRU'), new BufferPool(curFrames, 'MRU'), new BufferPool(curFrames, 'CLOCK')];
+  } else {
+    activePools = [new BufferPool(curFrames, curPolicy)];
+  }
+}
+
+function setPolicy(btn) {
+  document.querySelectorAll('.pbtn').forEach(b => b.classList.remove('on'));
+  btn.classList.add('on');
+  curPolicy = btn.dataset.p;
+  _initPools();
+  renderFrames();
+  renderStats(null);
+}
+
+function applyFrames(v) {
+  curFrames = Math.max(2, Math.min(32, parseInt(v)||8));
+  document.getElementById('framesIn').value = curFrames;
+  _initPools();
+  renderFrames();
+  renderStats(null);
+}
+
+function doReset() {
+  _initPools();
+  Object.keys(db.tables).forEach(k => delete db.tables[k]);
+  Object.keys(db.tids).forEach(k => delete db.tids[k]);
+  db.nextTid = 1;
+  document.getElementById('replScroll').innerHTML = `
+    <div class="entry welcome">
+      <h2>BufSim — SQL Query Engine</h2>
+      <p>Buffer pool simulation with <code>LRU</code> · <code>MRU</code> · <code>CLOCK</code> replacement policies.</p>
+      <p style="margin-top:6px;">Supported: <code>CREATE TABLE</code> · <code>DROP TABLE</code> · <code>ALTER TABLE</code> · <code>INSERT</code> · <code>SELECT</code> · <code>UPDATE</code> · <code>DELETE</code> · <code>JOIN</code> · <code>SHOW TABLES</code></p>
+      <p style="margin-top:8px; color:var(--text3);">Each SELECT / JOIN drives page-level buffer pool accesses visible in the frame grid on the right.</p>
+    </div>`;
+  renderFrames();
+  renderCatalog();
+  renderStats(null);
+  resetSessionStats();
+}
+
+// ── keyboard history ──
+const hist = []; let histIdx = -1;
+document.getElementById('sqlIn').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); runSQL(); return; }
+  // Shift+Enter inserts a newline (default textarea behaviour, no override needed)
+  if (e.key === 'ArrowUp' && this.value.indexOf('\n') === -1) {
+    e.preventDefault();
+    histIdx = Math.min(histIdx+1, hist.length-1);
+    if (hist[histIdx] !== undefined) this.value = hist[histIdx];
+  }
+  if (e.key === 'ArrowDown' && this.value.indexOf('\n') === -1) {
+    e.preventDefault();
+    histIdx = Math.max(histIdx-1, -1);
+    this.value = histIdx === -1 ? '' : hist[histIdx];
+  }
+});
+
+// ── init ──
+renderFrames();
+renderCatalog();
+renderSessionStats();
+</script>
+</body>
+</html>
