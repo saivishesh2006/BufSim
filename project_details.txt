@@ -1,0 +1,35 @@
+# BufSim C++ Project Details
+
+The project is an in-memory SQL query engine with a simulated page-level buffer pool, implemented from scratch in C++17. Here is the breakdown of files and their features:
+
+1. `bufferManager.hpp` & `bufferManager.cpp`
+   - Contains the core logic for the buffer pool simulation.
+   - Implements an abstract `ReplacementPolicy` interface and three specific page replacement algorithms: LRU (Least Recently Used), MRU (Most Recently Used), and CLOCK (Second Chance).
+   - Manages memory frames (`Frame`), page pinning/unpinning, cache hits, misses, and disk read statistics (`BufStats`).
+
+2. `catalog.hpp` & `catalog.cpp`
+   - Handles schema management, tracking the structure of tables and columns (`ColumnDef` and `TableDef`).
+   - Computes exact byte offsets for fields within the fixed-size records.
+   - Persists database schema metadata to disk via a JSON file (`catalog.json`).
+   - Provides methods for creating/dropping tables and modifying schemas.
+
+3. `sqlParser.hpp` & `sqlParser.cpp`
+   - Implements the tokenizer and parsing engine to convert raw SQL strings into a structured `ParsedQuery` object.
+   - Extracts tables, query types, projections (`SelectCol`), filters (`WhereClause`), and expressions/conditions.
+   - Understands standard SQL statements: `CREATE TABLE`, `DROP TABLE`, `ALTER TABLE`, `INSERT`, `SELECT` (including GROUP BY, HAVING, ORDER BY, LIMIT/OFFSET), `JOIN`, `UPDATE`, `DELETE`, and `EXPLAIN`.
+
+4. `queryExecutor.hpp` & `queryExecutor.cpp`
+   - The execution engine responsible for fulfilling `ParsedQuery` commands.
+   - Interacts heavily with the Buffer Manager to fetch data pages into memory and track global session statistics.
+   - Evaluates filter conditions, applies projections, computes aggregate functions (COUNT, SUM, AVG, etc.), and executes operations like Nested Loop Joins (NLJ) and Block Nested Loop Joins (BNLJ).
+   - Manages formatting and writes the executed query results in a clean tabular layout to both the console and an `output.txt` file.
+
+5. `main.cpp`
+   - The interactive REPL (Read-Eval-Print Loop) shell for the engine.
+   - Interactively asks the user on startup for the buffer replacement policy and maximum frame count to simulate.
+   - Continuously reads raw SQL commands from standard input, triggers parsing, and passes queries to the executor.
+   - Handles utility commands like `SHOW TABLES` and `EXIT`.
+
+6. `makefile`
+   - Defines the build instructions to compile the C++ source files into a standalone `./bufsim` executable binary.
+   - Provides an easy `make clean` rule to wipe binaries, data `.bin` files, the JSON catalog, and runtime logs.

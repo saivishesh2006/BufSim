@@ -1,0 +1,52 @@
+{
+  "tables": [
+    {
+      "name": "staff",
+      "filename": "data/staff.bin",
+      "columns": [
+        { "name": "id", "type": "INT", "size": 4, "nullable": true },
+        { "name": "name", "type": "CHAR", "size": 20, "nullable": true },
+        { "name": "dept", "type": "CHAR", "size": 20, "nullable": true },
+        { "name": "salary", "type": "INT", "size": 4, "nullable": true },
+        { "name": "age", "type": "INT", "size": 4, "nullable": true },
+        { "name": "project_id", "type": "INT", "size": 4, "nullable": true }
+      ]
+    },
+    {
+      "name": "projects",
+      "filename": "data/projects.bin",
+      "columns": [
+        { "name": "id", "type": "INT", "size": 4, "nullable": true },
+        { "name": "name", "type": "CHAR", "size": 40, "nullable": true },
+        { "name": "dept", "type": "CHAR", "size": 20, "nullable": true },
+        { "name": "budget", "type": "INT", "size": 4, "nullable": true },
+        { "name": "status", "type": "INT", "size": 4, "nullable": true },
+        { "name": "lead_id", "type": "INT", "size": 4, "nullable": true }
+      ]
+    },
+    {
+      "name": "sales",
+      "filename": "data/sales.bin",
+      "columns": [
+        { "name": "id", "type": "INT", "size": 4, "nullable": true },
+        { "name": "staff_id", "type": "INT", "size": 4, "nullable": true },
+        { "name": "project_id", "type": "INT", "size": 4, "nullable": true },
+        { "name": "amount", "type": "INT", "size": 4, "nullable": true },
+        { "name": "quarter", "type": "INT", "size": 4, "nullable": true },
+        { "name": "year", "type": "INT", "size": 4, "nullable": true }
+      ]
+    },
+    {
+      "name": "reviews",
+      "filename": "data/reviews.bin",
+      "columns": [
+        { "name": "id", "type": "INT", "size": 4, "nullable": true },
+        { "name": "staff_id", "type": "INT", "size": 4, "nullable": true },
+        { "name": "reviewer_id", "type": "INT", "size": 4, "nullable": true },
+        { "name": "score", "type": "INT", "size": 4, "nullable": true },
+        { "name": "year", "type": "INT", "size": 4, "nullable": true },
+        { "name": "promoted", "type": "INT", "size": 4, "nullable": true }
+      ]
+    }
+  ]
+}

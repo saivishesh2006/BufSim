@@ -1,0 +1,92 @@
+# BufSim Learning Roadmap
+
+Here is a step-by-step roadmap to guide you through the codebase, explaining what each component does and how they all connect.
+
+---
+
+## 🗺️ Recommended Learning Roadmap
+
+1. Catalog & Storage Layout (catalog.hpp/cpp)
+   ↓
+2. Buffer Pool Manager (bufferManager.hpp/cpp)
+   ↓
+3. SQL Parser (sqlParser.hpp/cpp)
+   ↓
+4. Query Executor (queryExecutor.hpp/cpp)
+   ↓
+5. REPL Entrypoint (main.cpp)
+   ↓
+6. Practical Experiments (Hands-on)
+
+---
+
+## 📂 Phase 1: Database Storage & Catalog (catalog.hpp / catalog.cpp)
+Start here to understand how data is represented on disk and in memory.
+
+* **Key Concepts to Study:**
+  * **Fixed-Width Storage Layout:** Each table is stored as a binary file of 4096-byte (`PAGE_SIZE`) pages. A page begins with a 4-byte `int` for the record count, followed by fixed-size records.
+  * **`ColumnDef` and `TableDef` Structs:** Understand how the schema is represented. Note the `offset` field in `ColumnDef`—it stores the byte position of each column within a record.
+  * **`Catalog::computeOffsets`:** See how column offsets are calculated dynamically when a table is created or loaded.
+  * **Metadata Serialization:** Examine `save()` and `load()` to see how schemas are stored in a simple custom JSON format (`catalog.json`).
+
+---
+
+## 🧠 Phase 2: Core Buffer Pool Manager (bufferManager.hpp / bufferManager.cpp)
+Next, study how pages are cached in memory and swapped in/out from the disk.
+
+* **Key Concepts to Study:**
+  * **`Frame` Class:** Represents a single page slot in the buffer pool. Note the fields `pin_count` (how many queries are currently reading this page to prevent eviction), `is_dirty`, and `second_chance` (used for CLOCK).
+  * **`ReplacementPolicy` Interface:** Defines the contract for fetching a page, unpinning it, invalidating it, and getting state snapshots.
+  * **Replacement Algorithms:** Compare how the three policy classes manage their page pools:
+    * `LRUBufferManager`: Uses a `std::list` to move accessed pages to the front, evicting from the back.
+    * `MRUBufferManager`: Similar to LRU, but evicts the most recently used pages first (useful in sequential scans).
+    * `ClockBufferManager`: Implements a second-chance algorithm using a circular array and a `clock_hand`.
+  * **`PairHash` Struct:** Used to index the pages in `unordered_map` with `std::pair<FILE*, int>` as keys, allowing O(1) page lookups in the buffer pool.
+
+---
+
+## ⚙️ Phase 3: SQL Parser (sqlParser.hpp / sqlParser.cpp)
+Now, look at how the front-end accepts SQL strings and translates them into structured data.
+
+* **Key Concepts to Study:**
+  * **`QueryType` Enum & `ParsedQuery` Struct:** This is the internal representation of a query. It holds all the info about projections (`select_cols`), filters (`where`), and tables.
+  * **`SQLParser::tokenize`:** Splitting the input SQL string into individual words/tokens while respecting strings (e.g., `'John Doe'`).
+  * **`SQLParser::parse`:** A recursive-descent parser that walks through the tokens, matches keywords (`SELECT`, `FROM`, `JOIN`, `WHERE`), and fills out the `ParsedQuery` struct.
+  * **`Condition` and `WhereClause`:** How predicates like `col = val` or `t1.col = t2.col` are structured and joined together with `AND`/`OR`.
+
+---
+
+## 🚀 Phase 4: Query Executor (queryExecutor.hpp / queryExecutor.cpp)
+This is the heart of the engine where the parser and buffer manager meet. It interprets the `ParsedQuery` and reads/writes pages through the active buffer manager.
+
+* **Key Concepts to Study:**
+  * **`QueryExecutor::execute`:** The main switch-case that dispatches to specific DDL (e.g. `execCreate`) or DML (e.g. `execSelect`) executors.
+  * **`execInsert`:** Writes a record into a table page, handling page overflow by creating new pages when the 4096-byte block is full.
+  * **`execSelect`:** Walks through data pages via `bufferManager->getPage(...)`, evaluates filters with `matchesWhere`, aggregates results, and projects columns. **Crucial:** It must call `unpinPage` when finished with a page!
+  * **Join Implementation (`execJoin`):** Compare the Nested Loop Join (NLJ) and Block Nested Loop Join (BNLJ) structures.
+  * **`SessionStats` & `BufStats`:** How page accesses, disk reads, and cache hit rates are tracked and logged.
+
+---
+
+## 💻 Phase 5: REPL Driver Loop (main.cpp)
+Finally, read the entry point to see how the session is managed.
+
+* **Key Concepts to Study:**
+  * Interactive buffer configuration on startup (choosing frames and policy).
+  * The command REPL loop (`SQL> `) reading inputs.
+  * How files like `output.txt` are maintained across queries to write stats.
+
+---
+
+## 🛠️ How to Proceed (Hands-on Steps)
+
+1. **Build and Run the project:**
+   ```bash
+   make
+   ./bufsim
+   ```
+   Choose a policy (like **LRU**) and **3 frames**, and try running a simple query like `CREATE TABLE t (id INT, name CHAR(10));` followed by `INSERT INTO t VALUES (1, 'Alice');`.
+2. **Run the Test Suite:**
+   Inspect and run `test_bufsim.sh`. It contains comprehensive automated SQL flows that will populate tables and run aggregates/joins, giving you plenty of sample output in `output.txt` to analyze.
+3. **Trace Code Execution:**
+   Add trace outputs to `bufferManager.cpp` (e.g., print a message to `std::cout` whenever a page is evicted or loaded from disk). Run a few queries and watch how the buffer frames change in real-time!
