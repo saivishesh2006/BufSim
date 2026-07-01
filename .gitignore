@@ -1,0 +1,14 @@
+# Compiled binaries
+bufsim
+
+# Object files
+*.o
+
+# Data files (if these are generated and not source data)
+data/*.bin
+
+# Output logs
+output.txt
+
+# Hidden system files
+.DS_Store
